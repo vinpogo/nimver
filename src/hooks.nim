@@ -11,21 +11,21 @@
 import std/os
 
 const CommitMsgHook = """#!/bin/sh
-# Installed by nimantic-versioning. Do not edit by hand;
-# re-run `nimantic_versioning install-hooks --force` to regenerate.
-exec nimantic_versioning check-commit-msg "$1"
+# Installed by nimver. Do not edit by hand;
+# re-run `nimver install-hooks --force` to regenerate.
+exec nimver check-commit-msg "$1"
 """
 
 const PostCommitHook = """#!/bin/sh
-# Installed by nimantic-versioning. Do not edit by hand;
-# re-run `nimantic_versioning install-hooks --force` to regenerate.
+# Installed by nimver. Do not edit by hand;
+# re-run `nimver install-hooks --force` to regenerate.
 #
 # Guard against re-entrancy: `record-commit` folds its note file into HEAD via
 # `commit --amend`, which triggers this same hook again.
-if [ -n "$NIMANTIC_VERSIONING_AMENDING" ]; then
+if [ -n "$NIMVER_AMENDING" ]; then
   exit 0
 fi
-exec nimantic_versioning record-commit
+exec nimver record-commit
 """
 
 const ExecutablePerms = {

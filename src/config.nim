@@ -1,9 +1,9 @@
-## Loads the `.nimantic-versioning/config.ini` type -> bump-level mapping.
+## Loads the `.nimver/config.ini` type -> bump-level mapping.
 
 import std/[os, streams, parsecfg, tables, strutils]
 import ./semver
 
-const DefaultConfig* = """; nimantic-versioning configuration
+const DefaultConfig* = """; nimver configuration
 ;
 ; Maps a Conventional Commits type to a semantic version bump.
 ; Allowed values: major, minor, patch, none, ignore
@@ -35,13 +35,13 @@ type Config* = object
   types*: Table[string, BumpLevel]
 
 proc configPath*(repoRoot: string): string =
-  repoRoot / ".nimantic-versioning" / "config.ini"
+  repoRoot / ".nimver" / "config.ini"
 
 proc loadConfig*(repoRoot: string): Config =
   let path = configPath(repoRoot)
   if not fileExists(path):
     raise newException(
-      IOError, "Config not found at " & path & ". Run `nimantic_versioning init` first."
+      IOError, "Config not found at " & path & ". Run `nimver init` first."
     )
 
   var stream = newFileStream(path, fmRead)

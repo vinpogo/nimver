@@ -1,4 +1,4 @@
-nimantic_versioning
+nimver
 nimcache/
 testRepo/
 tests/test_e2e

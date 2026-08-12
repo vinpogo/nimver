@@ -5,7 +5,7 @@ author        = "vingy"
 description   = "A package to manage semantic versioning from commit messages"
 license       = "MIT"
 srcDir        = "src"
-bin           = @["nimantic_versioning"]
+bin           = @["nimver"]
 
 
 # Dependencies

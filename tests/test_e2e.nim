@@ -1,6 +1,6 @@
 ## End-to-end tests. Each test spins up a throwaway Git repo under
 ## `testRepo/` (gitignored, safe to blow away) and drives it through real
-## `git` + `nimantic_versioning` invocations, exactly as a user would.
+## `git` + `nimver` invocations, exactly as a user would.
 ##
 ## Run via `nimble test` (builds the binary first, then runs this file).
 
@@ -11,7 +11,7 @@ const TestRepoRoot = ProjectRoot / "testRepo"
 
 proc testEnv(): StringTableRef =
   ## The freshly built binary lives at the project root; prepend it to PATH
-  ## so the installed Git hooks (`exec nimantic_versioning ...`) resolve to
+  ## so the installed Git hooks (`exec nimver ...`) resolve to
   ## it instead of whatever else might be installed on the system.
   result = newStringTable(modeCaseSensitive)
   for k, v in envPairs():
@@ -23,11 +23,11 @@ proc run(cmd: string, dir: string): tuple[output: string, code: int] =
   (r.output, r.exitCode)
 
 proc changeNotes(dir: string): seq[string] =
-  toSeq(walkFiles(dir / ".nimantic-versioning" / "changes" / "*.txt"))
+  toSeq(walkFiles(dir / ".nimver" / "changes" / "*.txt"))
 
 proc freshRepo(name: string): string =
   ## A repo with one commit and an initial `pkg.nimble` at 0.1.0, with
-  ## nimantic-versioning initialized and its hooks installed.
+  ## nimver initialized and its hooks installed.
   result = TestRepoRoot / name
   removeDir(result)
   createDir(result)
@@ -42,9 +42,9 @@ proc freshRepo(name: string): string =
   r = run("git commit -q -m \"chore: init\"", result)
   doAssert r.code == 0, "initial commit failed: " & r.output
 
-  r = run("nimantic_versioning init", result)
+  r = run("nimver init", result)
   doAssert r.code == 0, "init failed: " & r.output
-  r = run("nimantic_versioning install-hooks", result)
+  r = run("nimver install-hooks", result)
   doAssert r.code == 0, "install-hooks failed: " & r.output
 
 proc commitFile(
@@ -84,12 +84,12 @@ suite "end-to-end":
     let notes = changeNotes(dir)
     check notes.len == 1
     check "breaking=true" in readFile(notes[0])
-    let (out1, _) = run("nimantic_versioning bump --dry-run", dir)
+    let (out1, _) = run("nimver bump --dry-run", dir)
     check "-> 1.0.0 (major)" in out1
 
   test "change notes are created according to config.ini's bump mapping":
     let dir = freshRepo("config-driven")
-    let cfgPath = dir / ".nimantic-versioning" / "config.ini"
+    let cfgPath = dir / ".nimver" / "config.ini"
     writeFile(cfgPath, readFile(cfgPath).replace("fix = patch", "fix = major"))
 
     let (_, code) = commitFile(dir, "a.txt", "hi", "fix: b")
@@ -98,7 +98,7 @@ suite "end-to-end":
     check notes.len == 1
     check "bump=major" in readFile(notes[0])
 
-    let (out1, _) = run("nimantic_versioning bump --dry-run", dir)
+    let (out1, _) = run("nimver bump --dry-run", dir)
     check "-> 1.0.0 (major)" in out1
 
   test "amending a commit replaces its note instead of duplicating":
@@ -209,7 +209,7 @@ suite "end-to-end":
 
   test "bump with no pending changes is a no-op":
     let dir = freshRepo("bump-empty")
-    let (output, code) = run("nimantic_versioning bump", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "Nothing to bump" in output
     check "0.1.0" in readFile(dir / "pkg.nimble")
@@ -217,7 +217,7 @@ suite "end-to-end":
   test "bump commits and tags the release by default":
     let dir = freshRepo("bump-defaults")
     discard commitFile(dir, "a.txt", "hi", "feat: add feature")
-    let (output, code) = run("nimantic_versioning bump", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "0.1.0 -> 0.2.0" in output
     check "0.2.0" in readFile(dir / "pkg.nimble")
@@ -232,7 +232,7 @@ suite "end-to-end":
   test "bump --commit's release commit is not recorded as a pending change":
     let dir = freshRepo("bump-commit")
     discard commitFile(dir, "a.txt", "hi", "feat: add feature")
-    let (_, code) = run("nimantic_versioning bump", dir)
+    let (_, code) = run("nimver bump", dir)
     check code == 0
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.2.0"
@@ -243,7 +243,7 @@ suite "end-to-end":
     discard commitFile(dir, "a.txt", "hi", "feat: add feature")
     let (headBefore, _) = run("git rev-parse HEAD", dir)
 
-    let (output, code) = run("nimantic_versioning bump --no-commit --no-tag", dir)
+    let (output, code) = run("nimver bump --no-commit --no-tag", dir)
     check code == 0
     check "0.1.0 -> 0.2.0" in output
     check "0.2.0" in readFile(dir / "pkg.nimble")
@@ -259,7 +259,7 @@ suite "end-to-end":
   test "bump --no-tag commits without creating a tag":
     let dir = freshRepo("bump-no-tag")
     discard commitFile(dir, "a.txt", "hi", "fix: patch it")
-    let (_, code) = run("nimantic_versioning bump --no-tag", dir)
+    let (_, code) = run("nimver bump --no-tag", dir)
     check code == 0
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.1.1"
@@ -271,7 +271,7 @@ suite "end-to-end":
     discard commitFile(dir, "a.txt", "hi", "fix: patch it")
     let (headBefore, _) = run("git rev-parse HEAD", dir)
 
-    let (output, code) = run("nimantic_versioning bump --no-commit", dir)
+    let (output, code) = run("nimver bump --no-commit", dir)
     check code == 0
     check "Skipped tag" in output
 
@@ -283,7 +283,7 @@ suite "end-to-end":
   test "bump tags the release by default":
     let dir = freshRepo("bump-tag")
     discard commitFile(dir, "a.txt", "hi", "fix: patch it")
-    let (_, code) = run("nimantic_versioning bump", dir)
+    let (_, code) = run("nimver bump", dir)
     check code == 0
     let (tags, _) = run("git tag", dir)
     check "v0.1.1" in tags

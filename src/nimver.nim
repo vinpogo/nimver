@@ -1,4 +1,4 @@
-## nimantic-versioning: semantic versioning for Nim projects, driven by
+## nimver: semantic versioning for Nim projects, driven by
 ## Conventional Commits and wired into Git via a `commit-msg` hook.
 
 import std/[os, strutils, sequtils, algorithm, tables]
@@ -14,17 +14,17 @@ import ./semver
 const NimblePkgVersion {.strdefine.} = "unknown"
 
 const Usage = """
-nimantic-versioning - semantic versioning from Conventional Commits
+nimver - semantic versioning from Conventional Commits
 
 Usage:
-  nimantic_versioning init
-  nimantic_versioning install-hooks [--force]
-  nimantic_versioning bump [--no-commit] [--no-tag] [--dry-run]
-  nimantic_versioning version
+  nimver init
+  nimver install-hooks [--force]
+  nimver bump [--no-commit] [--no-tag] [--dry-run]
+  nimver version
 
 Invoked by installed hooks (not usually run by hand):
-  nimantic_versioning check-commit-msg <path-to-message-file>
-  nimantic_versioning record-commit
+  nimver check-commit-msg <path-to-message-file>
+  nimver record-commit
 """
 
 proc cmdVersion() =
@@ -38,7 +38,7 @@ proc cmdInit(repoRoot: string) =
   else:
     writeFile(cfgPath, DefaultConfig)
     echo "Created ", cfgPath
-  echo "Run `nimantic_versioning install-hooks` to wire up the commit-msg hook."
+  echo "Run `nimver install-hooks` to wire up the commit-msg hook."
 
 proc cmdInstallHooks(repoRoot: string, force: bool) =
   installHooks(repoRoot, force)
@@ -66,13 +66,13 @@ proc cmdCheckCommitMsg(repoRoot: string, msgFilePath: string) =
   let raw = readFile(msgFilePath)
   let (ok, err, parsed) = parseCommitMessage(raw)
   if not ok:
-    stderr.writeLine("nimantic-versioning: invalid commit message: " & err)
+    stderr.writeLine("nimver: invalid commit message: " & err)
     quit(1)
 
   let cfg = loadConfig(repoRoot)
   let (validType, typeErr, _) = validateAndLookup(cfg, parsed)
   if not validType:
-    stderr.writeLine("nimantic-versioning: " & typeErr)
+    stderr.writeLine("nimver: " & typeErr)
     quit(1)
 
 proc cmdRecordCommit(repoRoot: string) =
@@ -83,23 +83,23 @@ proc cmdRecordCommit(repoRoot: string) =
   if isRebaseInProgress(repoRoot):
     # Amending here would fight with the rebase sequencer's own bookkeeping
     # (see `isRebaseInProgress`). Leave existing notes untouched; review
-    # `.nimantic-versioning/changes` once the rebase completes if any
+    # `.nimver/changes` once the rebase completes if any
     # reworded commits should have their notes updated.
     stderr.writeLine(
-      "nimantic-versioning: skipping change-note recording during an in-progress rebase"
+      "nimver: skipping change-note recording during an in-progress rebase"
     )
     return
 
   let raw = gitLastCommitMessage(repoRoot)
   let (ok, err, parsed) = parseCommitMessage(raw)
   if not ok:
-    stderr.writeLine("nimantic-versioning: skipping unparseable commit: " & err)
+    stderr.writeLine("nimver: skipping unparseable commit: " & err)
     return
 
   let cfg = loadConfig(repoRoot)
   let (validType, typeErr, bumpLevel) = validateAndLookup(cfg, parsed)
   if not validType:
-    stderr.writeLine("nimantic-versioning: skipping commit: " & typeErr)
+    stderr.writeLine("nimver: skipping commit: " & typeErr)
     return
 
   # If HEAD's own diff already contains a change-note file, this call is
@@ -126,7 +126,7 @@ proc cmdRecordCommit(repoRoot: string) =
     return
 
   gitAdd(repoRoot, changesDir(repoRoot))
-  putEnv("NIMANTIC_VERSIONING_AMENDING", "1")
+  putEnv("NIMVER_AMENDING", "1")
   gitAmendNoVerify(repoRoot)
 
 proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
@@ -134,7 +134,7 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
   ## / `--no-tag` on the command line opt out of either one.
   let entries = readChangeFiles(repoRoot)
   if entries.len == 0:
-    echo "No pending changes found in .nimantic-versioning/changes. Nothing to bump."
+    echo "No pending changes found in .nimver/changes. Nothing to bump."
     return
 
   var overall = blNone
@@ -194,7 +194,7 @@ when isMainModule:
   try:
     repoRoot = findRepoRoot()
   except IOError as e:
-    stderr.writeLine("nimantic-versioning: " & e.msg)
+    stderr.writeLine("nimver: " & e.msg)
     quit(1)
 
   try:
@@ -205,9 +205,7 @@ when isMainModule:
       cmdInstallHooks(repoRoot, "--force" in args)
     of "check-commit-msg":
       if args.len < 2:
-        stderr.writeLine(
-          "Usage: nimantic_versioning check-commit-msg <path-to-message-file>"
-        )
+        stderr.writeLine("Usage: nimver check-commit-msg <path-to-message-file>")
         quit(1)
       cmdCheckCommitMsg(repoRoot, args[1])
     of "record-commit":
@@ -223,5 +221,5 @@ when isMainModule:
       echo Usage
       quit(1)
   except IOError as e:
-    stderr.writeLine("nimantic-versioning: " & e.msg)
+    stderr.writeLine("nimver: " & e.msg)
     quit(1)

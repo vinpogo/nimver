@@ -1,5 +1,5 @@
 ## Reads and writes the per-commit "pending version bump" files stored under
-## `.nimantic-versioning/changes/`.
+## `.nimver/changes/`.
 
 import std/[os, strutils, times, random, sequtils, algorithm]
 import ./semver
@@ -11,12 +11,12 @@ type ChangeEntry* = object
   message*: string
   path*: string
 
-const ChangesRelPrefix* = ".nimantic-versioning/changes/"
+const ChangesRelPrefix* = ".nimver/changes/"
   ## Repo-relative (POSIX-style, matching `git diff-tree` output) path
   ## prefix for change-note files.
 
 proc changesDir*(repoRoot: string): string =
-  repoRoot / ".nimantic-versioning" / "changes"
+  repoRoot / ".nimver" / "changes"
 
 proc randomSlug(): string =
   ## A timestamp prefix keeps files sorted chronologically; the random
