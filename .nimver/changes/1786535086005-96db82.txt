@@ -1,7 +1,0 @@
-type=refactor
-bump=major
-breaking=true
-===
-refactor!: rename tool to nimver
-
-BREAKING CHANGE: binary, package, state directory (.nimver), and NIMVER_AMENDING env var all renamed from nimantic_versioning/nimantic-versioning.

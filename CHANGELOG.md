@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.0.0] - 2026-08-12
+
+### Breaking Changes
+- rename tool to nimver
+
 ## [1.2.0] - 2026-08-12
 
 ### Fixes
