@@ -1,12 +1,12 @@
 # nimver
 
-Semantic versioning for Nim projects, driven by [Conventional
+Semantic versioning for Nim and package.json projects, driven by [Conventional
 Commits](https://www.conventionalcommits.org) and wired into Git via hooks.
 
 Every commit is validated against the Conventional Commits format. When it
 passes, a small note recording the resulting version bump (`major` / `minor`
 / `patch` / `none`) is folded into that same commit. Later, `bump` consolidates
-all pending notes since the last release, bumps the `.nimble` file's version
+all pending notes since the last release, bumps the project manifest's version
 by the *highest* bump level found (bumps don't stack), and writes a grouped
 entry to `CHANGELOG.md`.
 
@@ -41,6 +41,26 @@ worktree (`git worktree add`), a submodule, or a clone made with
 `--separate-git-dir`. Git keeps a single hooks directory per repository, so
 installing from any worktree installs for all of them.
 
+## Supported project manifests
+
+`nimver bump` currently supports:
+
+- A `.nimble` file at the repository root.
+- A root `package.json`.
+
+A `package.json` project is detected directly from its root manifest, regardless
+of whether it uses pnpm, npm, Yarn, Bun, or another package manager. The
+top-level `version` string is updated without reformatting the rest of the file.
+Manifest adapters locate the exact version value in their source format, and a
+shared source editor replaces only that value.
+
+Package-manager lockfiles are currently left unchanged. This is correct for
+pnpm, whose lockfile does not record the root package's own version. Lockfiles
+that duplicate the root version, such as `package-lock.json`, will need a
+separate lockfile adapter. If both a `.nimble` file and `package.json` are
+present, `nimver` stops and reports the ambiguity rather than choosing one
+implicitly.
+
 ## Everyday use
 
 Just commit normally, using Conventional Commits syntax:
@@ -65,11 +85,11 @@ BREAKING CHANGE: describe the break
 When you're ready to cut a release:
 
 ```sh
-nimver bump                       # updates .nimble + CHANGELOG.md, commits, and tags
+nimver bump                       # updates the manifest + CHANGELOG.md, commits, and tags
 nimver bump --dry-run             # preview without writing anything
 nimver bump --no-commit           # update files, but skip the commit (and the tag)
 nimver bump --no-tag              # commit the release, but skip the git tag
-nimver bump --no-commit --no-tag  # only touch .nimble/CHANGELOG.md, no git activity
+nimver bump --no-commit --no-tag  # only touch the manifest/CHANGELOG.md, no git activity
 ```
 
 By default `bump` both creates a `version: vX.Y.Z` release commit and tags it
@@ -79,8 +99,8 @@ requires a release commit to point at, so `--no-commit` alone (without
 
 `bump` reads every pending file in `.nimver/changes/`, takes the
 highest bump level among them (major > minor > patch > none — levels are
-never added together), applies it to the version currently in your `.nimble`
-file, writes a new `CHANGELOG.md` section grouped by commit type (with any
+never added together), applies it to the version currently in your project
+manifest, writes a new `CHANGELOG.md` section grouped by commit type (with any
 breaking changes called out first), and deletes the consumed change files.
 If nothing pending would actually change the version (e.g. only `chore`/`docs`
 commits since the last release), it exits without touching anything.

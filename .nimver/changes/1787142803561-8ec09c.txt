@@ -1,0 +1,13 @@
+type=feat
+bump=minor
+breaking=false
+packages=root
+===
+feat: add manifest adapters
+
+Version manipulation moves behind a manifest adapter: a shared source
+editor replaces only the version token, so the rest of the file keeps its
+formatting. Adds a package.json adapter alongside the Nimble one.
+
+A repository whose root holds both kinds of manifest is no longer resolved
+by whichever one walkDir happened to yield first.
