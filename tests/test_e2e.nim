@@ -77,6 +77,65 @@ proc freshPackageRepo(name: string): string =
   r = run("nimver install-hooks", result)
   doAssert r.code == 0, "install-hooks failed: " & r.output
 
+proc freshWorkspaceRepo(
+    name: string, sharedChanges = "all", includeRootPackage = false
+): string =
+  ## A fixed workspace with package.json and Nimble packages at version 0.1.0.
+  ## With `includeRootPackage`, a repository-root Nimble package is added too,
+  ## which acts as an ancestor of the nested packages.
+  result = TestRepoRoot / name
+  removeDir(result)
+  createDir(result / "packages" / "web")
+  createDir(result / "packages" / "cli")
+
+  var commandResult = run("git init -q", result)
+  doAssert commandResult.code == 0, "git init failed: " & commandResult.output
+  discard run("git config user.email test@example.com", result)
+  discard run("git config user.name Test", result)
+
+  writeFile(
+    result / "packages" / "web" / "package.json",
+    """{
+  "name": "web",
+  "version": "0.1.0"
+}
+""",
+  )
+  writeFile(result / "packages" / "cli" / "cli.nimble", "version = \"0.1.0\"\n")
+  if includeRootPackage:
+    writeFile(result / "root.nimble", "version = \"0.1.0\"\n")
+  discard run("git add -A", result)
+  commandResult = run("git commit -q -m \"chore: init\"", result)
+  doAssert commandResult.code == 0, "initial commit failed: " & commandResult.output
+
+  commandResult = run("nimver init", result)
+  doAssert commandResult.code == 0, "init failed: " & commandResult.output
+  let configPath = result / ".nimver" / "config.ini"
+  writeFile(
+    configPath,
+    readFile(configPath) & """
+
+[workspace]
+strategy = fixed
+sharedChanges = """ &
+      sharedChanges & """
+
+[package.web]
+manifest = packages/web/package.json
+
+[package.cli]
+manifest = packages/cli/cli.nimble
+""" &
+      (if includeRootPackage: "\n[package.root]\nmanifest = root.nimble\n" else: ""),
+  )
+  discard run("git add -A", result)
+  commandResult =
+    run("git commit -q --no-verify -m \"chore: configure workspace\"", result)
+  doAssert commandResult.code == 0, "config commit failed: " & commandResult.output
+
+  commandResult = run("nimver install-hooks", result)
+  doAssert commandResult.code == 0, "install-hooks failed: " & commandResult.output
+
 proc commitFile(
     dir, fileName, contents, message: string
 ): tuple[output: string, code: int] =
@@ -98,6 +157,7 @@ suite "end-to-end":
     check "type=feat" in content
     check "bump=minor" in content
     check "breaking=false" in content
+    check "packages=root" in content
     check "feat: add a" in content
     discard output
 
@@ -375,6 +435,97 @@ suite "end-to-end":
     check "pnpm-lock.yaml" notin changedFiles
     let (tags, _) = run("git tag", dir)
     check "v0.2.0" in tags
+
+  test "workspace change notes record affected packages":
+    let dir = freshWorkspaceRepo("workspace-attribution")
+    let (_, code) =
+      commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+    check code == 0
+
+    let notes = changeNotes(dir)
+    check notes.len == 1
+    let content = readFile(notes[0])
+    check "packages=web" in content
+    check "packages=cli" notin content
+
+  test "workspace shared changes affect every package":
+    let dir = freshWorkspaceRepo("workspace-shared-all")
+    let (_, code) = commitFile(dir, "README.md", "# Workspace\n", "fix: document")
+    check code == 0
+
+    let notes = changeNotes(dir)
+    check notes.len == 1
+    check "packages=web,cli" in readFile(notes[0])
+
+  test "workspace can ignore shared changes":
+    let dir = freshWorkspaceRepo("workspace-shared-none", "none")
+    let (_, code) = commitFile(dir, "README.md", "# Workspace\n", "fix: document")
+    check code == 0
+    check changeNotes(dir).len == 0
+
+  test "workspace can assign shared changes to one package":
+    let dir = freshWorkspaceRepo("workspace-shared-package", "package.cli")
+    let (_, code) = commitFile(dir, "README.md", "# Workspace\n", "fix: document")
+    check code == 0
+
+    let notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=cli" in readFile(notes[0])
+
+  test "nested packages attribute changes to the nearest manifest":
+    let dir =
+      freshWorkspaceRepo("workspace-nearest-manifest", includeRootPackage = true)
+
+    # Inside `packages/web`, so the nearest manifest is the web package's,
+    # even though the root package's manifest is also an ancestor.
+    var (_, code) =
+      commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+    check code == 0
+    var notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=web" in readFile(notes[0])
+
+    # Outside every nested package, so the root package is the nearest.
+    createDir(dir / "src")
+    (_, code) = commitFile(dir, "src/main.nim", "echo 1\n", "fix: patch root")
+    check code == 0
+    notes = changeNotes(dir)
+    require notes.len == 2
+    let rootNotes = notes.filterIt("fix: patch root" in readFile(it))
+    require rootNotes.len == 1
+    check "packages=root" in readFile(rootNotes[0])
+
+  test "fixed workspace bump updates every manifest":
+    let dir = freshWorkspaceRepo("workspace-fixed-bump")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "0.1.0 -> 0.2.0" in output
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.2.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+    check changeNotes(dir).len == 0
+
+    let (changedFiles, _) = run("git show --pretty=format: --name-only HEAD", dir)
+    check "packages/web/package.json" in changedFiles
+    check "packages/cli/cli.nimble" in changedFiles
+
+  test "fixed workspace bump rejects divergent manifest versions":
+    let dir = freshWorkspaceRepo("workspace-divergent")
+    writeFile(dir / "packages" / "cli" / "cli.nimble", "version = \"0.2.0\"\n")
+    discard run("git add packages/cli/cli.nimble", dir)
+    discard run("git commit -q --no-verify -m \"chore: diverge package versions\"", dir)
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "fix: patch web")
+
+    let (output, code) = run("nimver bump --no-commit --no-tag", dir)
+    check code != 0
+    check "Fixed workspace manifests must have the same version" in output
+    check "\"version\": \"0.1.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.2.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
 
   test "bump detects package.json without a package-manager marker":
     let dir = freshPackageRepo("bump-package-json-no-marker")

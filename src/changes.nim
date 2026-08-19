@@ -8,6 +8,7 @@ type ChangeEntry* = object
   commitType*: string
   bumpLevel*: BumpLevel
   breaking*: bool
+  affectedPackages*: seq[string]
   message*: string
   path*: string
 
@@ -26,7 +27,11 @@ proc randomSlug(): string =
   $millis & "-" & suffix
 
 proc writeChangeFile*(
-    repoRoot, commitType: string, bumpLevel: BumpLevel, breaking: bool, message: string
+    repoRoot, commitType: string,
+    bumpLevel: BumpLevel,
+    breaking: bool,
+    affectedPackages: seq[string],
+    message: string,
 ): string =
   randomize()
   let dir = changesDir(repoRoot)
@@ -34,7 +39,9 @@ proc writeChangeFile*(
   let path = dir / (randomSlug() & ".txt")
   let content =
     "type=" & commitType & "\n" & "bump=" & $bumpLevel & "\n" & "breaking=" &
-    (if breaking: "true" else: "false") & "\n" & "===\n" & message & "\n"
+    (if breaking: "true" else: "false") & "\n" & "packages=" & affectedPackages.join(
+      ","
+    ) & "\n" & "===\n" & message & "\n"
   writeFile(path, content)
   path
 
@@ -53,6 +60,7 @@ proc parseChangeFile(path: string): ChangeEntry =
   var commitType = ""
   var bumpLevel = blNone
   var breaking = false
+  var affectedPackages: seq[string] = @[]
   for line in header.splitLines():
     if line.len == 0:
       continue
@@ -66,6 +74,8 @@ proc parseChangeFile(path: string): ChangeEntry =
       bumpLevel = parseBumpLevel(kv[1])
     of "breaking":
       breaking = kv[1] == "true"
+    of "packages":
+      affectedPackages = kv[1].split(',').mapIt(it.strip()).filterIt(it.len > 0)
     else:
       discard
 
@@ -73,6 +83,7 @@ proc parseChangeFile(path: string): ChangeEntry =
     commitType: commitType,
     bumpLevel: bumpLevel,
     breaking: breaking,
+    affectedPackages: affectedPackages,
     message: message,
     path: path,
   )

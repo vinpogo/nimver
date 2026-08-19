@@ -105,6 +105,55 @@ breaking changes called out first), and deletes the consumed change files.
 If nothing pending would actually change the version (e.g. only `chore`/`docs`
 commits since the last release), it exits without touching anything.
 
+## Workspaces
+
+Repositories with multiple packages must list them explicitly in
+`.nimver/config.ini`. Each package only declares its version manifest:
+
+```ini
+[workspace]
+strategy = fixed
+sharedChanges = all
+
+[package.web]
+manifest = packages/web/package.json
+
+[package.cli]
+manifest = packages/cli/cli.nimble
+```
+
+Only fixed-version workspaces are currently supported. Every configured
+manifest must start at the same version, and `nimver bump` updates all of them
+to the same next version. A mismatch is reported before any file is changed.
+
+A changed file is attributed to the package whose manifest is its *nearest
+ancestor*, so no per-package file patterns are needed:
+
+```text
+packages/web/src/button.ts   -> web
+packages/cli/src/main.nim    -> cli
+```
+
+Each package needs its own directory; two manifests in one directory are
+rejected, since the nearest ancestor would be ambiguous. A manifest at the
+repository root therefore acts as a catch-all for everything not inside a more
+specific package.
+
+nimver does not filter files within a package (docs, fixtures, examples). Use
+commit types for that: a `docs:` or `chore:` commit is mapped to `none` by
+default, so it appears in the changelog without bumping the version.
+
+Changed files that match no package are controlled by `sharedChanges`:
+
+- `all` affects every package.
+- `none` does not create a pending change for any package.
+- `package.<name>` affects only the named package.
+
+Change files remain one-per-commit and include a `packages` header listing the
+affected packages. Repositories without any `[package.<name>]` sections remain
+backward compatible: their root manifest is detected automatically and treated
+as a single package named `root`.
+
 ## Configuration
 
 `.nimver/config.ini` maps each Conventional Commit type to a
