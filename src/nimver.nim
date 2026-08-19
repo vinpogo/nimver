@@ -6,7 +6,7 @@ import ./gitutils
 import ./config
 import ./commitparser
 import ./changes
-import ./nimblefile
+import ./adapters/manifest
 import ./changelog
 import ./hooks
 import ./semver
@@ -145,8 +145,8 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
     echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
     return
 
-  let nimblePath = findNimbleFile(repoRoot)
-  let current = readVersion(nimblePath)
+  let projectManifest = findProjectManifest(repoRoot)
+  let current = readVersion(projectManifest)
   let next = bump(current, overall)
   let section = buildSection(next, entries)
   let changelogPath = repoRoot / "CHANGELOG.md"
@@ -157,14 +157,14 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
     echo section
     return
 
-  writeVersion(nimblePath, next)
+  writeVersion(projectManifest, next)
   prependToChangelog(changelogPath, section)
   deleteChangeFiles(entries)
-  echo "Updated ", nimblePath
+  echo "Updated ", projectManifest.filePath, " (", projectManifest.displayName(), ")"
   echo "Updated ", changelogPath
 
   if doCommit:
-    gitAdd(repoRoot, nimblePath)
+    gitAdd(repoRoot, projectManifest.filePath)
     gitAdd(repoRoot, changelogPath)
     gitAdd(repoRoot, changesDir(repoRoot))
     gitCommit(repoRoot, "version: v" & $next)
