@@ -10,6 +10,7 @@ import ./adapters/manifest
 import ./changelog
 import ./hooks
 import ./semver
+import ./workspace
 
 const NimblePkgVersion {.strdefine.} = "unknown"
 
@@ -100,6 +101,9 @@ proc cmdRecordCommit(repoRoot: string) =
   if not validType:
     stderr.writeLine("nimver: skipping commit: " & typeErr)
     return
+  let projectWorkspace = loadWorkspace(repoRoot, cfg)
+  let changedPaths = gitHeadChangedPaths(repoRoot)
+  let affectedPackages = affectedPackageNames(projectWorkspace, changedPaths)
 
   # If HEAD's own diff already contains a change-note file, this call is
   # amending a commit that was already recorded rather than a brand-new
@@ -108,16 +112,17 @@ proc cmdRecordCommit(repoRoot: string) =
   # (rather than tracking hashes) also means a reword that changes the
   # commit's type (e.g. `fix:` -> `feat:`) is handled correctly for free.
   var dirty = false
-  for path in gitHeadChangedPaths(repoRoot):
+  for path in changedPaths:
     if path.startsWith(ChangesRelPrefix) and path.endsWith(".txt"):
       let full = repoRoot / path
       if fileExists(full):
         removeFile(full)
         dirty = true
 
-  if bumpLevel != blIgnore:
+  if bumpLevel != blIgnore and affectedPackages.len > 0:
     discard writeChangeFile(
-      repoRoot, parsed.commitType, bumpLevel, parsed.breaking, parsed.rawMessage
+      repoRoot, parsed.commitType, bumpLevel, parsed.breaking, affectedPackages,
+      parsed.rawMessage,
     )
     dirty = true
 
@@ -131,6 +136,8 @@ proc cmdRecordCommit(repoRoot: string) =
 proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
   ## `doCommit`/`doTag` are true by default at the call site; `--no-commit`
   ## / `--no-tag` on the command line opt out of either one.
+  let config = loadConfig(repoRoot)
+  let projectWorkspace = loadWorkspace(repoRoot, config)
   let entries = readChangeFiles(repoRoot)
   if entries.len == 0:
     echo "No pending changes found in .nimver/changes. Nothing to bump."
@@ -145,8 +152,16 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
     echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
     return
 
-  let projectManifest = findProjectManifest(repoRoot)
-  let current = readVersion(projectManifest)
+  let current = readVersion(projectWorkspace.packages[0].manifest)
+  for package in projectWorkspace.packages[1 .. ^1]:
+    let packageVersion = readVersion(package.manifest)
+    if packageVersion != current:
+      raise newException(
+        IOError,
+        "Fixed workspace manifests must have the same version: package '" &
+          projectWorkspace.packages[0].name & "' is " & $current & ", package '" &
+          package.name & "' is " & $packageVersion,
+      )
   let next = bump(current, overall)
   let section = buildSection(next, entries)
   let changelogPath = repoRoot / "CHANGELOG.md"
@@ -157,14 +172,18 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
     echo section
     return
 
-  writeVersion(projectManifest, next)
+  for package in projectWorkspace.packages:
+    writeVersion(package.manifest, next)
   prependToChangelog(changelogPath, section)
   deleteChangeFiles(entries)
-  echo "Updated ", projectManifest.filePath, " (", projectManifest.displayName(), ")"
+  for package in projectWorkspace.packages:
+    echo "Updated ",
+      package.manifest.filePath, " (", package.manifest.displayName(), ")"
   echo "Updated ", changelogPath
 
   if doCommit:
-    gitAdd(repoRoot, projectManifest.filePath)
+    for package in projectWorkspace.packages:
+      gitAdd(repoRoot, package.manifest.filePath)
     gitAdd(repoRoot, changelogPath)
     gitAdd(repoRoot, changesDir(repoRoot))
     gitCommit(repoRoot, "version: v" & $next)

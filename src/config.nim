@@ -1,4 +1,5 @@
-## Loads the `.nimver/config.ini` type -> bump-level mapping.
+## Loads Conventional Commit, workspace, and package configuration from
+## `.nimver/config.ini`.
 
 import std/[os, streams, parsecfg, tables, strutils]
 import ./semver
@@ -15,6 +16,15 @@ const DefaultConfig* = """; nimver configuration
 ;   - a commit type not listed here is rejected by the commit-msg hook.
 ; Regardless of this mapping, a commit marked as breaking (`feat!: ...` or a
 ; `BREAKING CHANGE:` footer) always bumps `major`.
+;
+; Repositories with multiple manifests can declare a fixed workspace:
+;
+; [workspace]
+; strategy = fixed
+; sharedChanges = all
+;
+; [package.example]
+; manifest = packages/example/package.json
 
 [types]
 feat = minor
@@ -31,11 +41,84 @@ ci = none
 version = ignore
 """
 
-type Config* = object
-  types*: Table[string, BumpLevel]
+type
+  WorkspaceStrategy* = enum
+    wsFixed
+
+  SharedChangesKind* = enum
+    scAll
+    scNone
+    scPackage
+
+  SharedChangesPolicy* = object
+    kind*: SharedChangesKind
+    packageName*: string
+
+  PackageConfig* = object
+    name*: string
+    manifestPath*: string
+
+  Config* = object
+    types*: Table[string, BumpLevel]
+    workspaceStrategy*: WorkspaceStrategy
+    sharedChanges*: SharedChangesPolicy
+    packages*: seq[PackageConfig]
 
 proc configPath*(repoRoot: string): string =
   repoRoot / ".nimver" / "config.ini"
+
+proc parseSharedChanges(value: string): SharedChangesPolicy =
+  ## `package.<name>` targets a single package. `package:<name>` is accepted
+  ## too, but only when quoted in the ini file: `parsecfg` treats an unquoted
+  ## colon as the key/value delimiter and would strip everything after it.
+  let normalizedValue = value.strip()
+  case normalizedValue.toLowerAscii()
+  of "all":
+    SharedChangesPolicy(kind: scAll)
+  of "none":
+    SharedChangesPolicy(kind: scNone)
+  else:
+    let lowercasedValue = normalizedValue.toLowerAscii()
+    if lowercasedValue.startsWith("package.") or lowercasedValue.startsWith("package:"):
+      let packageName = normalizedValue["package.".len .. ^1].strip()
+      if packageName.len == 0:
+        raise newException(ValueError, "sharedChanges package name cannot be empty")
+      SharedChangesPolicy(kind: scPackage, packageName: packageName)
+    else:
+      raise newException(
+        ValueError,
+        "Invalid sharedChanges value: " & value &
+          ". Expected all, none, or package.<name>",
+      )
+
+proc validateWorkspaceConfig(config: Config, path: string) =
+  var packageNames = initTable[string, bool]()
+  var manifestPaths = initTable[string, bool]()
+  for package in config.packages:
+    if package.name.len == 0:
+      raise newException(IOError, "Package name cannot be empty in " & path)
+    if package.manifestPath.len == 0:
+      raise newException(
+        IOError, "Package '" & package.name & "' is missing manifest in " & path
+      )
+    if packageNames.hasKey(package.name):
+      raise newException(IOError, "Duplicate package '" & package.name & "' in " & path)
+    if manifestPaths.hasKey(package.manifestPath):
+      raise newException(
+        IOError, "Duplicate package manifest '" & package.manifestPath & "' in " & path
+      )
+    packageNames[package.name] = true
+    manifestPaths[package.manifestPath] = true
+
+  let referencesImplicitRoot =
+    config.packages.len == 0 and config.sharedChanges.packageName == "root"
+  if config.sharedChanges.kind == scPackage and not referencesImplicitRoot and
+      not packageNames.hasKey(config.sharedChanges.packageName):
+    raise newException(
+      IOError,
+      "sharedChanges references unknown package '" & config.sharedChanges.packageName &
+        "' in " & path,
+    )
 
 proc loadConfig*(repoRoot: string): Config =
   let path = configPath(repoRoot)
@@ -53,8 +136,13 @@ proc loadConfig*(repoRoot: string): Config =
   defer:
     close(parser)
 
-  result = Config(types: initTable[string, BumpLevel]())
+  result = Config(
+    types: initTable[string, BumpLevel](),
+    workspaceStrategy: wsFixed,
+    sharedChanges: SharedChangesPolicy(kind: scAll),
+  )
   var currentSection = ""
+  var currentPackageIndex = -1
   while true:
     let event = next(parser)
     case event.kind
@@ -62,11 +150,42 @@ proc loadConfig*(repoRoot: string): Config =
       break
     of cfgSectionStart:
       currentSection = event.section
+      currentPackageIndex = -1
+      if currentSection.toLowerAscii().startsWith("package."):
+        let packageName = currentSection["package.".len .. ^1].strip()
+        result.packages.add(PackageConfig(name: packageName))
+        currentPackageIndex = result.packages.high
     of cfgKeyValuePair, cfgOption:
-      if currentSection.toLowerAscii() == "types":
+      let normalizedSection = currentSection.toLowerAscii()
+      let normalizedKey = event.key.strip().toLowerAscii()
+      if normalizedSection == "types":
         result.types[event.key.strip().toLowerAscii()] = parseBumpLevel(event.value)
+      elif normalizedSection == "workspace":
+        case normalizedKey
+        of "strategy":
+          if event.value.strip().toLowerAscii() != "fixed":
+            raise newException(
+              IOError,
+              "Only workspace strategy 'fixed' is currently supported in " & path,
+            )
+          result.workspaceStrategy = wsFixed
+        of "sharedchanges":
+          try:
+            result.sharedChanges = parseSharedChanges(event.value)
+          except ValueError as parsingError:
+            raise newException(IOError, parsingError.msg & " in " & path)
+        else:
+          discard
+      elif currentPackageIndex >= 0:
+        case normalizedKey
+        of "manifest":
+          result.packages[currentPackageIndex].manifestPath = event.value.strip()
+        else:
+          discard
     of cfgError:
       raise newException(IOError, "Error parsing " & path & ": " & event.msg)
+
+  validateWorkspaceConfig(result, path)
 
 proc lookupType*(config: Config, commitType: string): (bool, BumpLevel) =
   let key = commitType.toLowerAscii()

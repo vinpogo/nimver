@@ -20,6 +20,16 @@ proc displayName*(manifest: ProjectManifest): string =
   of mkNimble: "Nimble"
   of mkPackageJson: "package.json"
 
+proc manifestFromPath*(filePath: string): ProjectManifest =
+  if not fileExists(filePath):
+    raise newException(IOError, "Manifest not found at " & filePath)
+  if filePath.endsWith(".nimble"):
+    ProjectManifest(manifestKind: mkNimble, filePath: filePath)
+  elif filePath.extractFilename() == "package.json":
+    ProjectManifest(manifestKind: mkPackageJson, filePath: filePath)
+  else:
+    raise newException(IOError, "Unsupported project manifest: " & filePath)
+
 proc findProjectManifest*(repoRoot: string): ProjectManifest =
   var nimbleManifestPath = ""
   for directoryEntryKind, directoryEntryPath in walkDir(repoRoot):
