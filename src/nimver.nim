@@ -20,8 +20,11 @@ nimver - semantic versioning from Conventional Commits
 Usage:
   nimver init
   nimver install-hooks [--force]
-  nimver bump [--no-commit] [--no-tag] [--dry-run]
+  nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
   nimver version
+
+`bump` takes a package name only in an `independent` workspace, where it
+releases that one package. A `fixed` workspace always releases every package.
 
 Invoked by installed hooks (not usually run by hand):
   nimver check-commit-msg <path-to-message-file>
@@ -105,14 +108,15 @@ proc cmdRecordCommit(repoRoot: string) =
   let changedPaths = gitHeadChangedPaths(repoRoot)
   let affectedPackages = affectedPackageNames(projectWorkspace, changedPaths)
 
-  # If HEAD's own diff already contains a change-note file, this call is
-  # amending a commit that was already recorded rather than a brand-new
-  # commit - remove the stale note (whatever its previously recorded type
-  # was) before writing a fresh one. Checking the commit's actual diff
-  # (rather than tracking hashes) also means a reword that changes the
-  # commit's type (e.g. `fix:` -> `feat:`) is handled correctly for free.
+  # If HEAD *added* a change-note file, this call is amending a commit that was
+  # already recorded rather than a brand-new commit - remove the stale note
+  # (whatever its previously recorded type was) before writing a fresh one.
+  # Checking the commit's actual diff (rather than tracking hashes) also means a
+  # reword that changes the commit's type (e.g. `fix:` -> `feat:`) is handled
+  # correctly for free. Only additions count: a release commit legitimately
+  # rewrites notes that are still pending for other packages.
   var dirty = false
-  for path in changedPaths:
+  for path in gitHeadAddedPaths(repoRoot):
     if path.startsWith(ChangesRelPrefix) and path.endsWith(".txt"):
       let full = repoRoot / path
       if fileExists(full):
@@ -133,21 +137,56 @@ proc cmdRecordCommit(repoRoot: string) =
   putEnv("NIMVER_AMENDING", "1")
   gitAmendNoVerify(repoRoot)
 
-proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
-  ## `doCommit`/`doTag` are true by default at the call site; `--no-commit`
-  ## / `--no-tag` on the command line opt out of either one.
-  let config = loadConfig(repoRoot)
-  let projectWorkspace = loadWorkspace(repoRoot, config)
-  let entries = readChangeFiles(repoRoot)
-  if entries.len == 0:
-    echo "No pending changes found in .nimver/changes. Nothing to bump."
-    return
+proc highestBumpLevel(entries: seq[ChangeEntry]): BumpLevel =
+  result = blNone
+  for entry in entries:
+    if entry.bumpLevel > result:
+      result = entry.bumpLevel
 
-  var overall = blNone
-  for e in entries:
-    if e.bumpLevel > overall:
-      overall = e.bumpLevel
+proc changelogPathFor(repoRoot: string, package: WorkspacePackage): string =
+  ## An independently versioned package keeps its changelog next to its
+  ## manifest, since its version moves on its own schedule.
+  if package.rootDirectory.len == 0:
+    repoRoot / "CHANGELOG.md"
+  else:
+    repoRoot / package.rootDirectory / "CHANGELOG.md"
 
+proc releaseTagFor(
+    projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
+): string =
+  ## Tags and release commits are namespaced per package only once packages are
+  ## named in the config. A repository whose single manifest was detected rather
+  ## than configured keeps the flat `vX.Y.Z` scheme it always had.
+  if projectWorkspace.hasExplicitPackages:
+    package.name & "-v" & $version
+  else:
+    "v" & $version
+
+proc releaseCommitSubjectFor(
+    projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
+): string =
+  if projectWorkspace.hasExplicitPackages:
+    "version(" & package.name & "): v" & $version
+  else:
+    "version: v" & $version
+
+proc releaseLabelFor(projectWorkspace: Workspace, package: WorkspacePackage): string =
+  ## What the release is called in progress output: the package name once
+  ## packages are configured, otherwise the same wording as a fixed release.
+  if projectWorkspace.hasExplicitPackages: package.name else: "version"
+
+proc reportSkippedTag() =
+  # Without a release commit, HEAD is still whatever it was before this run -
+  # tagging it would mislabel an unrelated commit.
+  echo "Skipped tag: no release commit was created (pass --no-tag along with --no-commit)."
+
+proc bumpFixedWorkspace(
+    repoRoot: string,
+    projectWorkspace: Workspace,
+    entries: seq[ChangeEntry],
+    doCommit, doTag, dryRun: bool,
+) =
+  let overall = highestBumpLevel(entries)
   if overall == blNone:
     echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
     return
@@ -191,12 +230,114 @@ proc cmdBump(repoRoot: string, doCommit, doTag, dryRun: bool) =
 
   if doTag:
     if not doCommit:
-      # Without a release commit, HEAD is still whatever it was before this
-      # run - tagging it as vX.Y.Z would mislabel an unrelated commit.
-      echo "Skipped tag: no release commit was created (pass --no-tag along with --no-commit)."
+      reportSkippedTag()
     else:
       gitTag(repoRoot, "v" & $next)
       echo "Created tag v" & $next
+
+proc bumpPackage(
+    repoRoot: string,
+    projectWorkspace: Workspace,
+    package: WorkspacePackage,
+    allEntries: seq[ChangeEntry],
+    doCommit, doTag, dryRun: bool,
+) =
+  let entries =
+    allEntries.filterIt(package.name in projectWorkspace.effectivePackages(it))
+  if entries.len == 0:
+    echo "No pending changes for package '", package.name, "'. Nothing to bump."
+    return
+
+  let overall = highestBumpLevel(entries)
+  if overall == blNone:
+    echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
+    return
+
+  let current = readVersion(package.manifest)
+  let next = bump(current, overall)
+  let section = buildSection(next, entries)
+  let changelogPath = changelogPathFor(repoRoot, package)
+  let tag = releaseTagFor(projectWorkspace, package, next)
+
+  echo "Bumping ",
+    releaseLabelFor(projectWorkspace, package),
+    ": ",
+    $current,
+    " -> ",
+    $next,
+    " (",
+    $overall,
+    ")"
+  if dryRun:
+    echo "\n--- CHANGELOG entry (dry run, nothing written) ---"
+    echo section
+    return
+
+  writeVersion(package.manifest, next)
+  prependToChangelog(changelogPath, section)
+  for entry in entries:
+    let remainingPackages =
+      projectWorkspace.effectivePackages(entry).filterIt(it != package.name)
+    entry.rewriteAffectedPackages(remainingPackages)
+  echo "Updated ", package.manifest.filePath, " (", package.manifest.displayName(), ")"
+  echo "Updated ", changelogPath
+
+  if doCommit:
+    gitAdd(repoRoot, package.manifest.filePath)
+    gitAdd(repoRoot, changelogPath)
+    gitAdd(repoRoot, changesDir(repoRoot))
+    gitCommit(repoRoot, releaseCommitSubjectFor(projectWorkspace, package, next))
+    echo "Created release commit."
+
+  if doTag:
+    if not doCommit:
+      reportSkippedTag()
+    else:
+      gitTag(repoRoot, tag)
+      echo "Created tag " & tag
+
+proc packagesWithPendingChanges(
+    projectWorkspace: Workspace, entries: seq[ChangeEntry]
+): seq[string] =
+  for package in projectWorkspace.packages:
+    for entry in entries:
+      if package.name in projectWorkspace.effectivePackages(entry):
+        result.add(package.name)
+        break
+
+proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bool) =
+  ## `doCommit`/`doTag` are true by default at the call site; `--no-commit`
+  ## / `--no-tag` on the command line opt out of either one.
+  let config = loadConfig(repoRoot)
+  let projectWorkspace = loadWorkspace(repoRoot, config)
+  let entries = readChangeFiles(repoRoot)
+  if entries.len == 0:
+    echo "No pending changes found in .nimver/changes. Nothing to bump."
+    return
+
+  case projectWorkspace.strategy
+  of wsFixed:
+    if requestedPackageName.len > 0:
+      raise newException(
+        IOError,
+        "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent.",
+      )
+    bumpFixedWorkspace(repoRoot, projectWorkspace, entries, doCommit, doTag, dryRun)
+  of wsIndependent:
+    # With a single package there is nothing to disambiguate, so a bare `bump`
+    # releases it. Naming a package is only required once several exist.
+    let package =
+      if requestedPackageName.len > 0:
+        projectWorkspace.findPackage(requestedPackageName)
+      elif projectWorkspace.packages.len == 1:
+        projectWorkspace.packages[0]
+      else:
+        raise newException(
+          IOError,
+          "workspace strategy is 'independent', so `nimver bump` needs a package to release. Packages with pending changes: " &
+            packagesWithPendingChanges(projectWorkspace, entries).join(", "),
+        )
+    bumpPackage(repoRoot, projectWorkspace, package, entries, doCommit, doTag, dryRun)
 
 when isMainModule:
   let args = commandLineParams()
@@ -229,8 +370,16 @@ when isMainModule:
     of "record-commit":
       cmdRecordCommit(repoRoot)
     of "bump":
+      var requestedPackageName = ""
+      for arg in args[1 .. ^1]:
+        if not arg.startsWith("--"):
+          if requestedPackageName.len > 0:
+            stderr.writeLine("nimver: `bump` takes at most one package name")
+            quit(1)
+          requestedPackageName = arg
       cmdBump(
         repoRoot,
+        requestedPackageName,
         not ("--no-commit" in args),
         not ("--no-tag" in args),
         "--dry-run" in args,

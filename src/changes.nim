@@ -26,6 +26,18 @@ proc randomSlug(): string =
   let suffix = toHex(rand(0 .. 0xFFFFFF), 6).toLowerAscii()
   $millis & "-" & suffix
 
+proc renderChangeFile(
+    commitType: string,
+    bumpLevel: BumpLevel,
+    breaking: bool,
+    affectedPackages: seq[string],
+    message: string,
+): string =
+  "type=" & commitType & "\n" & "bump=" & $bumpLevel & "\n" & "breaking=" &
+    (if breaking: "true" else: "false") & "\n" & "packages=" & affectedPackages.join(
+    ","
+  ) & "\n" & "===\n" & message & "\n"
+
 proc writeChangeFile*(
     repoRoot, commitType: string,
     bumpLevel: BumpLevel,
@@ -37,12 +49,9 @@ proc writeChangeFile*(
   let dir = changesDir(repoRoot)
   createDir(dir)
   let path = dir / (randomSlug() & ".txt")
-  let content =
-    "type=" & commitType & "\n" & "bump=" & $bumpLevel & "\n" & "breaking=" &
-    (if breaking: "true" else: "false") & "\n" & "packages=" & affectedPackages.join(
-      ","
-    ) & "\n" & "===\n" & message & "\n"
-  writeFile(path, content)
+  writeFile(
+    path, renderChangeFile(commitType, bumpLevel, breaking, affectedPackages, message)
+  )
   path
 
 proc parseChangeFile(path: string): ChangeEntry =
@@ -102,3 +111,18 @@ proc readChangeFiles*(repoRoot: string): seq[ChangeEntry] =
 proc deleteChangeFiles*(entries: seq[ChangeEntry]) =
   for entry in entries:
     removeFile(entry.path)
+
+proc rewriteAffectedPackages*(entry: ChangeEntry, remainingPackages: seq[string]) =
+  ## Releasing one package consumes the note for that package only: the note is
+  ## rewritten with whichever packages still have it pending, and removed once
+  ## none are left.
+  if remainingPackages.len == 0:
+    removeFile(entry.path)
+  else:
+    writeFile(
+      entry.path,
+      renderChangeFile(
+        entry.commitType, entry.bumpLevel, entry.breaking, remainingPackages,
+        entry.message,
+      ),
+    )
