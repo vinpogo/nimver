@@ -1,0 +1,6 @@
+type=test
+bump=none
+breaking=false
+packages=root
+===
+test: split the end-to-end suite into focused files

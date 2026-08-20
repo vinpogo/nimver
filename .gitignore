@@ -1,4 +1,6 @@
 nimver
 nimcache/
 testRepo/
-tests/test_e2e
+# Compiled test suites: Nim emits an extension-less binary next to each source.
+tests/test_*
+!tests/test_*.nim
