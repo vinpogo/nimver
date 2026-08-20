@@ -9,6 +9,7 @@
 ##     created and folds it in via a guarded `commit --amend`.
 
 import std/os
+import ./gitutils
 
 const CommitMsgHook = """#!/bin/sh
 # Installed by nimver. Do not edit by hand;
@@ -43,10 +44,16 @@ proc writeHook(hooksDir, name, content: string, force: bool) =
   writeFile(hookPath, content)
   setFilePermissions(hookPath, ExecutablePerms)
 
-proc installHooks*(repoRoot: string, force: bool) =
-  let hooksDir = repoRoot / ".git" / "hooks"
+proc installHooks*(repoRoot: string, force: bool): string =
+  ## Installs both hooks and returns the directory they were written to. That
+  ## directory is resolved through Git rather than assumed to be
+  ## `<root>/.git/hooks`, so this also works from a linked worktree or any
+  ## other checkout whose `.git` is a file (see `gitPath`). Note that Git
+  ## shares one hooks directory across all worktrees of a repository.
+  let hooksDir = gitPath(repoRoot, "hooks")
   if not dirExists(hooksDir):
-    raise newException(IOError, "No .git/hooks directory found at " & hooksDir)
+    raise newException(IOError, "No hooks directory found at " & hooksDir)
 
   writeHook(hooksDir, "commit-msg", CommitMsgHook, force)
   writeHook(hooksDir, "post-commit", PostCommitHook, force)
+  hooksDir
