@@ -1,7 +1,7 @@
 ## Detects a supported project manifest and dispatches version operations to
 ## the corresponding ecosystem adapter.
 
-import std/[os, strutils]
+import std/[os, algorithm, strutils]
 import ./nimble
 import ./packagejson
 import ../semver
@@ -30,30 +30,22 @@ proc manifestFromPath*(filePath: string): ProjectManifest =
   else:
     raise newException(IOError, "Unsupported project manifest: " & filePath)
 
-proc findProjectManifest*(repoRoot: string): ProjectManifest =
-  var nimbleManifestPath = ""
+proc findRootManifests*(repoRoot: string): seq[ProjectManifest] =
+  ## Every supported manifest sitting directly in the repository root, in a
+  ## stable order. More than one means the repository versions several packages
+  ## from the same directory, which the caller has to make sense of.
+  var nimbleManifestPaths: seq[string] = @[]
   for directoryEntryKind, directoryEntryPath in walkDir(repoRoot):
     if directoryEntryKind == pcFile and directoryEntryPath.endsWith(".nimble"):
-      if nimbleManifestPath.len > 0:
-        raise
-          newException(IOError, "Multiple .nimble files found at the repository root")
-      nimbleManifestPath = directoryEntryPath
+      nimbleManifestPaths.add(directoryEntryPath)
+  sort(nimbleManifestPaths)
+
+  for nimbleManifestPath in nimbleManifestPaths:
+    result.add(ProjectManifest(manifestKind: mkNimble, filePath: nimbleManifestPath))
 
   let packageJsonPath = repoRoot / "package.json"
-  if nimbleManifestPath.len > 0 and fileExists(packageJsonPath):
-    raise newException(
-      IOError,
-      "Both Nimble and package.json manifests were found. Remove one or configure a single project manifest.",
-    )
-  if nimbleManifestPath.len > 0:
-    return ProjectManifest(manifestKind: mkNimble, filePath: nimbleManifestPath)
   if fileExists(packageJsonPath):
-    return ProjectManifest(manifestKind: mkPackageJson, filePath: packageJsonPath)
-
-  raise newException(
-    IOError,
-    "No supported project manifest found. Expected a .nimble file or package.json.",
-  )
+    result.add(ProjectManifest(manifestKind: mkPackageJson, filePath: packageJsonPath))
 
 proc readVersion*(manifest: ProjectManifest): SemVer =
   case manifest.manifestKind

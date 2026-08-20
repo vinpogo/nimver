@@ -1,7 +1,7 @@
 ## Loads Conventional Commit, workspace, and package configuration from
 ## `.nimver/config.ini`.
 
-import std/[os, streams, parsecfg, tables, strutils]
+import std/[os, streams, parsecfg, tables, strutils, sequtils]
 import ./semver
 
 const DefaultConfig* = """; nimver configuration
@@ -28,6 +28,7 @@ const DefaultConfig* = """; nimver configuration
 ;
 ; [package.example]
 ; manifest = packages/example/package.json
+; sourceFiles = packages/example/**   ; optional; defaults to nearest manifest
 
 [types]
 feat = minor
@@ -61,10 +62,16 @@ type
   PackageConfig* = object
     name*: string
     manifestPath*: string
+    sourceFilePatterns*: seq[string]
+      ## Optional. Without patterns a file belongs to the package whose
+      ## manifest is its nearest ancestor.
 
   Config* = object
     types*: Table[string, BumpLevel]
     workspaceStrategy*: WorkspaceStrategy
+    strategyWasSpecified*: bool
+      ## Distinguishes a configured strategy from the default, so sibling
+      ## manifests can imply `fixed` without overriding an explicit choice.
     sharedChanges*: SharedChangesPolicy
     packages*: seq[PackageConfig]
 
@@ -170,8 +177,10 @@ proc loadConfig*(repoRoot: string): Config =
           case event.value.strip().toLowerAscii()
           of "fixed":
             result.workspaceStrategy = wsFixed
+            result.strategyWasSpecified = true
           of "independent":
             result.workspaceStrategy = wsIndependent
+            result.strategyWasSpecified = true
           else:
             raise newException(
               IOError,
@@ -189,6 +198,9 @@ proc loadConfig*(repoRoot: string): Config =
         case normalizedKey
         of "manifest":
           result.packages[currentPackageIndex].manifestPath = event.value.strip()
+        of "sourcefiles":
+          result.packages[currentPackageIndex].sourceFilePatterns =
+            event.value.split(',').mapIt(it.strip()).filterIt(it.len > 0)
         else:
           discard
     of cfgError:
