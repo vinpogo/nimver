@@ -79,11 +79,23 @@ mkdir -p "$hooks_dir"
 # PATH. Writing them here also keeps a checkout working when nimver is not
 # installed yet, or is older than the release that taught `install-hooks`
 # about checkouts whose .git is a file.
+#
+# A hook is only ever replaced when it carries a marker proving it was
+# generated - our own, or the one `nimver install-hooks` writes. A hook that
+# merely mentions nimver is assumed to be hand-written (it may call nimver
+# *and* do other work), and git shares one hooks directory across every
+# worktree of a repository, so overwriting it would break all of them.
+marker='# managed-by: .agents/prepare (nimver hooks)'
+# From src/hooks.nim. If that text ever changes, the worst case is that we
+# stop recognising nimver's own hooks and leave them in place.
+nimver_marker='# Installed by nimver. Do not edit by hand;'
+
 write_hook() {
   local name=$1 body=$2
   local path="$hooks_dir/$name"
-  if [[ -e $path ]] && ! grep -q nimver "$path"; then
-    log "warning: $name hook exists and is not ours; leaving it alone"
+  if [[ -e $path ]] && ! grep -qxF -e "$marker" -e "$nimver_marker" "$path"; then
+    log "warning: $path is hand-written; leaving it alone"
+    log "         nimver's $name hook was not installed"
     return
   fi
   printf '%s\n' "$body" >"$path"
@@ -93,8 +105,8 @@ write_hook() {
 write_hook commit-msg "$(
   cat <<EOF
 #!/bin/sh
-# Installed by .agents/prepare; mirrors \`nimver install-hooks\`.
-# Do not edit by hand.
+${marker}
+# Regenerate by re-running .agents/prepare; mirrors \`nimver install-hooks\`.
 NIMVER='${nimver_bin}'
 command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
 exec "\$NIMVER" check-commit-msg "\$1"
@@ -104,8 +116,8 @@ EOF
 write_hook post-commit "$(
   cat <<EOF
 #!/bin/sh
-# Installed by .agents/prepare; mirrors \`nimver install-hooks\`.
-# Do not edit by hand.
+${marker}
+# Regenerate by re-running .agents/prepare; mirrors \`nimver install-hooks\`.
 #
 # Guard against re-entrancy: \`record-commit\` folds its note file into HEAD via
 # \`commit --amend\`, which triggers this same hook again.
