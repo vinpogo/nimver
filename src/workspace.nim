@@ -21,6 +21,9 @@ type
     strategy*: WorkspaceStrategy
     sharedChanges*: SharedChangesPolicy
     packages*: seq[WorkspacePackage]
+    hasExplicitPackages*: bool
+      ## False when the single package was detected rather than configured, in
+      ## which case releases keep the flat `vX.Y.Z` naming.
 
 proc normalizeRepoPath(path: string): string =
   result = path.replace('\\', '/')
@@ -63,6 +66,8 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
 
+  result.hasExplicitPackages = config.packages.len > 0
+
   if config.packages.len == 0:
     let detectedManifest = findProjectManifest(repoRoot)
     result.packages.add(
@@ -85,6 +90,28 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
     )
 
   validateDistinctRootDirectories(result.packages)
+
+proc packageNames*(workspace: Workspace): seq[string] =
+  for package in workspace.packages:
+    result.add(package.name)
+
+proc findPackage*(workspace: Workspace, name: string): WorkspacePackage =
+  for package in workspace.packages:
+    if package.name == name:
+      return package
+  raise newException(
+    IOError,
+    "Unknown package '" & name & "'. Configured packages: " &
+      workspace.packageNames().join(", "),
+  )
+
+proc effectivePackages*(workspace: Workspace, entry: ChangeEntry): seq[string] =
+  ## Notes recorded before per-package attribution existed carry no `packages`
+  ## list, so they count for every package.
+  if entry.affectedPackages.len == 0:
+    workspace.packageNames()
+  else:
+    entry.affectedPackages
 
 proc containsPath(packageRootDirectory, changedPath: string): bool =
   packageRootDirectory.len == 0 or changedPath.startsWith(packageRootDirectory & "/")

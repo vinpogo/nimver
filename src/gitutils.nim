@@ -61,6 +61,24 @@ proc gitHeadChangedPaths*(repoRoot: string): seq[string] =
     if l.len > 0:
       result.add(l)
 
+proc gitHeadAddedPaths*(repoRoot: string): seq[string] =
+  ## Repo-relative paths *added* by HEAD. A change note recorded by a previous
+  ## `post-commit` shows up as an addition in its own commit, so this is what
+  ## identifies a stale note during an amend. Notes that a release commit
+  ## rewrites or deletes show up as modifications/deletions instead, and must
+  ## survive: an independent release leaves a note pending for the packages it
+  ## did not release.
+  let output = runGit(
+    @[
+      "-C", repoRoot, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
+      "--diff-filter=A", "HEAD",
+    ]
+  )
+  for line in output.splitLines():
+    let trimmedLine = line.strip()
+    if trimmedLine.len > 0:
+      result.add(trimmedLine)
+
 proc gitAmendNoVerify*(repoRoot: string) =
   ## Folds currently staged changes into HEAD without re-running hooks other
   ## than `post-commit` (which the caller is responsible for guarding against

@@ -1,0 +1,16 @@
+type=feat
+bump=minor
+breaking=false
+packages=root
+===
+feat: add independent workspace versioning
+
+Each package can be released on its own with `nimver bump <package>`,
+keeping its own version, changelog and tag. `independent` is the default
+strategy; a configured workspace opts into one shared version with
+`strategy = fixed`.
+
+Not a breaking change relative to v2.0.0: workspaces did not exist there,
+so no released configuration changes meaning. A repository with a single
+detected manifest still needs no package argument and keeps the flat
+`vX.Y.Z` release naming.

@@ -17,10 +17,13 @@ const DefaultConfig* = """; nimver configuration
 ; Regardless of this mapping, a commit marked as breaking (`feat!: ...` or a
 ; `BREAKING CHANGE:` footer) always bumps `major`.
 ;
-; Repositories with multiple manifests can declare a fixed workspace:
+; Repositories with multiple manifests can declare a workspace. The default
+; strategy is `independent`: each package keeps its own version and is released
+; with `nimver bump <package>`. Use `fixed` to give every package the same
+; version, released together by `nimver bump`.
 ;
 ; [workspace]
-; strategy = fixed
+; strategy = independent
 ; sharedChanges = all
 ;
 ; [package.example]
@@ -44,6 +47,7 @@ version = ignore
 type
   WorkspaceStrategy* = enum
     wsFixed
+    wsIndependent
 
   SharedChangesKind* = enum
     scAll
@@ -138,7 +142,7 @@ proc loadConfig*(repoRoot: string): Config =
 
   result = Config(
     types: initTable[string, BumpLevel](),
-    workspaceStrategy: wsFixed,
+    workspaceStrategy: wsIndependent,
     sharedChanges: SharedChangesPolicy(kind: scAll),
   )
   var currentSection = ""
@@ -163,12 +167,17 @@ proc loadConfig*(repoRoot: string): Config =
       elif normalizedSection == "workspace":
         case normalizedKey
         of "strategy":
-          if event.value.strip().toLowerAscii() != "fixed":
+          case event.value.strip().toLowerAscii()
+          of "fixed":
+            result.workspaceStrategy = wsFixed
+          of "independent":
+            result.workspaceStrategy = wsIndependent
+          else:
             raise newException(
               IOError,
-              "Only workspace strategy 'fixed' is currently supported in " & path,
+              "Invalid workspace strategy: " & event.value &
+                ". Expected fixed or independent, in " & path,
             )
-          result.workspaceStrategy = wsFixed
         of "sharedchanges":
           try:
             result.sharedChanges = parseSharedChanges(event.value)

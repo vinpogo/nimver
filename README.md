@@ -112,7 +112,6 @@ Repositories with multiple packages must list them explicitly in
 
 ```ini
 [workspace]
-strategy = fixed
 sharedChanges = all
 
 [package.web]
@@ -122,9 +121,50 @@ manifest = packages/web/package.json
 manifest = packages/cli/cli.nimble
 ```
 
-Only fixed-version workspaces are currently supported. Every configured
-manifest must start at the same version, and `nimver bump` updates all of them
-to the same next version. A mismatch is reported before any file is changed.
+### Strategies
+
+`strategy = independent` is the default: each package keeps its own version, so
+`bump` takes the package to release:
+
+```sh
+nimver bump web
+nimver bump cli --dry-run
+```
+
+Each package gets its own version, its own `CHANGELOG.md` next to its manifest,
+a `version(<package>): vX.Y.Z` release commit, and a `<package>-vX.Y.Z` tag.
+Plain `nimver bump` reports which packages have pending changes instead of
+releasing several at once, so a release is always one commit and one tag.
+
+`strategy = fixed` instead gives every package one shared version. All
+configured manifests must start at the same version, and `nimver bump` moves all
+of them to the same next version; a mismatch is reported before any file is
+changed. The release commit is `version: vX.Y.Z`, tagged `vX.Y.Z`, and the
+changelog is the repository-root `CHANGELOG.md`.
+
+```ini
+[workspace]
+strategy = fixed
+```
+
+A repository with no `[package.<name>]` sections is unaffected by either
+strategy: its manifest is detected as a single package, `nimver bump` needs no
+package name, and releases keep the flat `version: vX.Y.Z` commit, `vX.Y.Z` tag,
+and root `CHANGELOG.md`. Package-namespaced tags start only once you name
+packages in the config.
+
+A commit that touches several packages records one note listing all of them, and
+releasing a package consumes only its own entry:
+
+```ini
+packages=web,cli    # after `nimver bump web`:
+packages=cli        # still pending for cli, same note file
+```
+
+The note is removed once its last package has been released, so filenames stay
+stable and no note is rewritten just because a commit hash changed.
+
+### Change attribution
 
 A changed file is attributed to the package whose manifest is its *nearest
 ancestor*, so no per-package file patterns are needed:
@@ -200,7 +240,7 @@ repo, so it's always safe to delete `testRepo/` between runs.
 ```
 nimver init
 nimver install-hooks [--force]
-nimver bump [--no-commit] [--no-tag] [--dry-run]
+nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
 nimver version
 
 Invoked by installed hooks (not usually run by hand):

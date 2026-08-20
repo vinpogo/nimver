@@ -78,9 +78,9 @@ proc freshPackageRepo(name: string): string =
   doAssert r.code == 0, "install-hooks failed: " & r.output
 
 proc freshWorkspaceRepo(
-    name: string, sharedChanges = "all", includeRootPackage = false
+    name: string, sharedChanges = "all", includeRootPackage = false, strategy = "fixed"
 ): string =
-  ## A fixed workspace with package.json and Nimble packages at version 0.1.0.
+  ## A workspace with package.json and Nimble packages at version 0.1.0.
   ## With `includeRootPackage`, a repository-root Nimble package is added too,
   ## which acts as an ancestor of the nested packages.
   result = TestRepoRoot / name
@@ -111,23 +111,15 @@ proc freshWorkspaceRepo(
   commandResult = run("nimver init", result)
   doAssert commandResult.code == 0, "init failed: " & commandResult.output
   let configPath = result / ".nimver" / "config.ini"
-  writeFile(
-    configPath,
-    readFile(configPath) & """
-
-[workspace]
-strategy = fixed
-sharedChanges = """ &
-      sharedChanges & """
-
-[package.web]
-manifest = packages/web/package.json
-
-[package.cli]
-manifest = packages/cli/cli.nimble
-""" &
-      (if includeRootPackage: "\n[package.root]\nmanifest = root.nimble\n" else: ""),
-  )
+  # Built with explicit newlines: a newline directly after `"""` would be
+  # swallowed by Nim, which silently joins interpolated ini lines.
+  let workspaceConfig =
+    "\n[workspace]\n" & (if strategy.len > 0: "strategy = " & strategy & "\n"
+    else: "") & "sharedChanges = " & sharedChanges & "\n" &
+    "\n[package.web]\nmanifest = packages/web/package.json\n" &
+    "\n[package.cli]\nmanifest = packages/cli/cli.nimble\n" &
+    (if includeRootPackage: "\n[package.root]\nmanifest = root.nimble\n" else: "")
+  writeFile(configPath, readFile(configPath) & workspaceConfig)
   discard run("git add -A", result)
   commandResult =
     run("git commit -q --no-verify -m \"chore: configure workspace\"", result)
@@ -526,6 +518,156 @@ suite "end-to-end":
       dir / "packages" / "web" / "package.json"
     )
     check "version = \"0.2.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+
+  test "independent bump releases only the requested package":
+    let dir = freshWorkspaceRepo("independent-single", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump web", dir)
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in output
+
+    # Only the released package moves; the other keeps its own version.
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.1.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+
+    # The changelog lives next to the manifest it describes.
+    check fileExists(dir / "packages" / "web" / "CHANGELOG.md")
+    check not fileExists(dir / "CHANGELOG.md")
+
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version(web): v0.2.0"
+    let (tags, _) = run("git tag", dir)
+    check "web-v0.2.0" in tags.strip()
+    check changeNotes(dir).len == 0
+
+  test "independent bump consumes a shared note one package at a time":
+    let dir = freshWorkspaceRepo("independent-shared", strategy = "independent")
+    discard commitFile(dir, "README.md", "# Workspace\n", "feat: shared change")
+    var notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=web,cli" in readFile(notes[0])
+
+    # Releasing `web` leaves the note pending for `cli` only.
+    var (output, code) = run("nimver bump web", dir)
+    check code == 0
+    check "0.1.0 -> 0.2.0" in output
+    notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=cli" in readFile(notes[0])
+    check "feat: shared change" in readFile(notes[0])
+
+    # Releasing `cli` consumes the last package, so the note is removed.
+    (output, code) = run("nimver bump cli", dir)
+    check code == 0
+    check "0.1.0 -> 0.2.0" in output
+    check changeNotes(dir).len == 0
+
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.2.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+    let (tags, _) = run("git tag", dir)
+    check "web-v0.2.0" in tags
+    check "cli-v0.2.0" in tags
+
+  test "independent packages can drift apart in version":
+    let dir = freshWorkspaceRepo("independent-drift", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "fix!: break web")
+    discard commitFile(dir, "packages/cli/main.nim", "echo 1\n", "fix: patch cli")
+
+    check run("nimver bump web", dir).code == 0
+    check run("nimver bump cli", dir).code == 0
+
+    check "\"version\": \"1.0.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.1.1\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+
+  test "independent bump requires a package name":
+    let dir = freshWorkspaceRepo("independent-no-package", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump", dir)
+    check code != 0
+    check "needs a package to release" in output
+    check "web" in output
+    check "\"version\": \"0.1.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+
+  test "independent bump rejects an unknown package":
+    let dir = freshWorkspaceRepo("independent-unknown", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump nope", dir)
+    check code != 0
+    check "Unknown package 'nope'" in output
+    check "web, cli" in output
+
+  test "a workspace without an explicit strategy versions independently":
+    let dir = freshWorkspaceRepo("default-strategy", strategy = "")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    # A bare bump cannot pick between packages...
+    var (output, code) = run("nimver bump", dir)
+    check code != 0
+    check "needs a package to release" in output
+
+    # ...and releasing one leaves the other alone, rather than moving both.
+    (output, code) = run("nimver bump web", dir)
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0" in output
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.1.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+    let (tags, _) = run("git tag", dir)
+    check "web-v0.2.0" in tags
+
+  test "a detected single manifest keeps flat release naming by default":
+    # No [workspace] section at all: the default strategy is independent, but a
+    # lone detected package must still release exactly as it did before
+    # workspaces existed - no package name required, no namespaced tag.
+    let dir = freshRepo("default-single-package")
+    discard commitFile(dir, "a.txt", "hi", "feat: add a")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "0.1.0 -> 0.2.0" in output
+    check "0.2.0" in readFile(dir / "pkg.nimble")
+    check fileExists(dir / "CHANGELOG.md")
+
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: v0.2.0"
+    let (tags, _) = run("git tag", dir)
+    check tags.strip() == "v0.2.0"
+
+  test "fixed bump rejects a package argument":
+    let dir = freshWorkspaceRepo("fixed-with-package")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump web", dir)
+    check code != 0
+    check "releases every package at once" in output
+
+  test "independent bump treats a pre-workspace note as affecting every package":
+    let dir = freshWorkspaceRepo("independent-legacy-note", strategy = "independent")
+    # A note in the pre-workspace format: no `packages=` line at all.
+    writeFile(
+      dir / ".nimver" / "changes" / "1700000000000-aaaaaa.txt",
+      "type=feat\nbump=minor\nbreaking=false\n===\nfeat: recorded by an older nimver\n",
+    )
+
+    let (output, code) = run("nimver bump web --no-commit --no-tag", dir)
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0" in output
+
+    let notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=cli" in readFile(notes[0])
 
   test "bump detects package.json without a package-manager marker":
     let dir = freshPackageRepo("bump-package-json-no-marker")
