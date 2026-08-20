@@ -1,0 +1,15 @@
+type=refactor
+bump=patch
+breaking=false
+packages=root
+===
+refactor: tag releases by package only when several exist
+
+Namespacing keyed on whether packages were declared, so a repository that
+named its single package - the way to keep an unrelated sibling manifest
+out of versioning - also switched from `v1.5.0` to `root-v1.5.0`. The two
+have nothing to do with each other.
+
+Package names now appear in tags, release commits and progress output only
+once a workspace holds more than one package, whether they were detected
+or declared.

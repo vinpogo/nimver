@@ -27,9 +27,6 @@ type
     strategy*: WorkspaceStrategy
     sharedChanges*: SharedChangesPolicy
     packages*: seq[WorkspacePackage]
-    hasExplicitPackages*: bool
-      ## False when the single package was detected rather than configured, in
-      ## which case releases keep the flat `vX.Y.Z` naming.
 
 proc normalizeRepoPath(path: string): string =
   result = path.replace('\\', '/')
@@ -129,9 +126,7 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
 
-  result.hasExplicitPackages = config.packages.len > 0
-
-  if not result.hasExplicitPackages:
+  if config.packages.len == 0:
     let detectedManifests = findRootManifests(repoRoot)
     if detectedManifests.len == 0:
       raise newException(

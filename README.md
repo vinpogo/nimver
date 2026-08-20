@@ -159,11 +159,12 @@ changelog is the repository-root `CHANGELOG.md`.
 strategy = fixed
 ```
 
-A repository with no `[package.<name>]` sections is unaffected by either
-strategy: its manifest is detected as a single package, `nimver bump` needs no
-package name, and releases keep the flat `version: vX.Y.Z` commit, `vX.Y.Z` tag,
-and root `CHANGELOG.md`. Package-namespaced tags start only once you name
-packages in the config.
+A workspace with a single package is unaffected by either strategy: `nimver bump`
+needs no package name, and releases keep the flat `version: vX.Y.Z` commit,
+`vX.Y.Z` tag, and root `CHANGELOG.md`. That holds whether the manifest was
+detected or declared, so naming one package to exclude an unrelated sibling
+manifest does not change how releases are tagged. Package-namespaced tags start
+only once a workspace holds more than one package.
 
 A commit that touches several packages records one note listing all of them, and
 releasing a package consumes only its own entry:
