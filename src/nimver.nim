@@ -151,13 +151,17 @@ proc changelogPathFor(repoRoot: string, package: WorkspacePackage): string =
   else:
     repoRoot / package.rootDirectory / "CHANGELOG.md"
 
+proc hasSeveralPackages(projectWorkspace: Workspace): bool =
+  ## Tags and release commits are namespaced only once there is more than one
+  ## package to tell apart. A lone package keeps the flat `vX.Y.Z` scheme,
+  ## whether it was detected or declared - naming a package to exclude a
+  ## sibling manifest should not change how releases are tagged.
+  projectWorkspace.packages.len > 1
+
 proc releaseTagFor(
     projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
 ): string =
-  ## Tags and release commits are namespaced per package only once packages are
-  ## named in the config. A repository whose single manifest was detected rather
-  ## than configured keeps the flat `vX.Y.Z` scheme it always had.
-  if projectWorkspace.hasExplicitPackages:
+  if projectWorkspace.hasSeveralPackages():
     package.name & "-v" & $version
   else:
     "v" & $version
@@ -165,15 +169,15 @@ proc releaseTagFor(
 proc releaseCommitSubjectFor(
     projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
 ): string =
-  if projectWorkspace.hasExplicitPackages:
+  if projectWorkspace.hasSeveralPackages():
     "version(" & package.name & "): v" & $version
   else:
     "version: v" & $version
 
 proc releaseLabelFor(projectWorkspace: Workspace, package: WorkspacePackage): string =
-  ## What the release is called in progress output: the package name once
-  ## packages are configured, otherwise the same wording as a fixed release.
-  if projectWorkspace.hasExplicitPackages: package.name else: "version"
+  ## What the release is called in progress output: the package name when
+  ## several exist, otherwise the same wording as a fixed release.
+  if projectWorkspace.hasSeveralPackages(): package.name else: "version"
 
 proc reportSkippedTag() =
   # Without a release commit, HEAD is still whatever it was before this run -

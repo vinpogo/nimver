@@ -80,6 +80,32 @@ suite "manifest adapters":
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.1.1"
 
+  test "declaring one manifest leaves its sibling alone, without renaming releases":
+    # Declaring a package is how you exclude an unrelated manifest - here a
+    # package.json that is only tooling. Doing so must not turn `v0.1.1` into
+    # `root-v0.1.1`: there is still only one package.
+    let dir = freshPackageRepo("declared-single-package")
+    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    let configPath = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath, readFile(configPath) & "\n[package.root]\nmanifest = pkg.nimble\n"
+    )
+    discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "assuming strategy = fixed" notin output
+    check "0.1.0 -> 0.1.1" in output
+
+    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    # The undeclared manifest is not versioned at all.
+    check "\"version\": \"0.1.0\"" in readFile(dir / "package.json")
+
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: v0.1.1"
+    let (tags, _) = run("git tag", dir)
+    check tags.strip() == "v0.1.1"
+
   test "sibling manifests are rejected when the strategy is independent":
     let dir = freshPackageRepo("sibling-manifests-independent")
     writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
