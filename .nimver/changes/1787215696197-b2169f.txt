@@ -1,0 +1,10 @@
+type=chore
+bump=none
+breaking=false
+===
+chore: add .agents/prepare checkout script
+
+Delta runs this in every worktree it creates: trusts the mise config so
+tool lookups stay non-interactive, then installs the nimver hooks with an
+absolute binary path, resolved through the checkout's real hooks
+directory.
