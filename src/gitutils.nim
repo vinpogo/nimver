@@ -13,6 +13,24 @@ proc findRepoRoot*(): string =
   ## Locates the root of the current Git working tree.
   runGit(@["rev-parse", "--show-toplevel"]).strip()
 
+proc gitPath*(repoRoot: string, relative: string): string =
+  ## Resolves `relative` inside the repository's Git directory.
+  ##
+  ## This is not the same as `repoRoot / ".git" / relative`: whenever the Git
+  ## directory does not physically live at `<root>/.git`, Git writes a
+  ## one-line `.git` *file* pointing at it instead. That is the case for
+  ## linked worktrees (`git worktree add`), submodules, and checkouts made
+  ## with `--separate-git-dir`. Asking Git also preserves its own split
+  ## between paths shared by every worktree (`hooks`) and per-worktree ones
+  ## (`rebase-merge`).
+  let resolved = runGit(@["-C", repoRoot, "rev-parse", "--git-path", relative]).strip()
+  # `--git-path` reports relative to Git's working directory, which `-C` has
+  # already set to `repoRoot`.
+  if isAbsolute(resolved):
+    resolved
+  else:
+    repoRoot / resolved
+
 proc gitAdd*(repoRoot: string, path: string) =
   discard runGit(@["-C", repoRoot, "add", "-A", "--", path])
 
@@ -55,5 +73,5 @@ proc isRebaseInProgress*(repoRoot: string): bool =
   ## sequencer's own bookkeeping (it does its own internal amend for
   ## `reword`, and does not expect us to move HEAD again on top of that), so
   ## the caller should treat this as a no-op while a rebase is in progress.
-  dirExists(repoRoot / ".git" / "rebase-merge") or
-    dirExists(repoRoot / ".git" / "rebase-apply")
+  dirExists(gitPath(repoRoot, "rebase-merge")) or
+    dirExists(gitPath(repoRoot, "rebase-apply"))

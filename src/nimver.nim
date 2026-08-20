@@ -41,8 +41,7 @@ proc cmdInit(repoRoot: string) =
   echo "Run `nimver install-hooks` to wire up the commit-msg hook."
 
 proc cmdInstallHooks(repoRoot: string, force: bool) =
-  installHooks(repoRoot, force)
-  let hooksDir = repoRoot / ".git" / "hooks"
+  let hooksDir = installHooks(repoRoot, force)
   echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
   echo "Installed post-commit hook at ", hooksDir / "post-commit"
 

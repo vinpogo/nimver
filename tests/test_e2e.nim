@@ -207,6 +207,82 @@ suite "end-to-end":
       "fix: b" in readFile(it) and "reworded" notin readFile(it)
     )
 
+  test "hooks install into the shared hooks directory from a linked worktree":
+    # A linked worktree's `.git` is a *file* pointing at
+    # `<main>/.git/worktrees/<name>`, so `<root>/.git/hooks` does not exist
+    # there. The same layout is used by submodules and by checkouts created
+    # with `--separate-git-dir`.
+    let dir = freshRepo("worktree-install")
+    let linked = TestRepoRoot / "worktree-install-linked"
+    removeDir(linked)
+    var r = run("git worktree add -q " & linked & " -b feature", dir)
+    check r.code == 0
+    check fileExists(linked / ".git")
+    check not dirExists(linked / ".git")
+
+    # Wipe the hooks installed by `freshRepo` so the install below is the
+    # only thing that could have put them back.
+    removeFile(dir / ".git" / "hooks" / "commit-msg")
+    removeFile(dir / ".git" / "hooks" / "post-commit")
+
+    r = run("nimver install-hooks", linked)
+    check r.code == 0
+    # Git shares one hooks directory across every worktree of a repository.
+    check fileExists(dir / ".git" / "hooks" / "commit-msg")
+    check fileExists(dir / ".git" / "hooks" / "post-commit")
+
+    r = run("nimver init", linked)
+    check r.code == 0
+    check commitFile(linked, "a.txt", "hi", "feat: add a").code == 0
+    let notes = changeNotes(linked)
+    check notes.len == 1
+    check "bump=minor" in readFile(notes[0])
+
+    check commitFile(linked, "b.txt", "hi", "bogus: nope").code != 0
+
+  test "rebase in a linked worktree is detected, leaving notes untouched":
+    # Per-worktree state such as `rebase-merge` lives in the worktree's own
+    # Git directory, not in `<main>/.git`. Failing to find it would let the
+    # post-commit hook amend commits from under the rebase sequencer.
+    let dir = freshRepo("worktree-rebase")
+    let linked = TestRepoRoot / "worktree-rebase-linked"
+    removeDir(linked)
+    var r = run("git worktree add -q " & linked & " -b feature", dir)
+    check r.code == 0
+    check run("nimver init", linked).code == 0
+
+    discard commitFile(linked, "a.txt", "hi", "feat: a")
+    discard commitFile(linked, "b.txt", "hi", "fix: b")
+    discard commitFile(linked, "c.txt", "hi", "docs: c")
+    check changeNotes(linked).len == 3
+
+    let seqEditor = TestRepoRoot / "worktree-rebase-seq-editor.sh"
+    writeFile(
+      seqEditor,
+      "#!/bin/sh\nsed -i 's/^pick \\(\\S*\\) fix: b/reword \\1 fix: b/' \"$1\"\n",
+    )
+    setFilePermissions(seqEditor, {fpUserRead, fpUserWrite, fpUserExec})
+
+    let msgEditor = TestRepoRoot / "worktree-rebase-msg-editor.sh"
+    writeFile(msgEditor, "#!/bin/sh\nsed -i 's/^fix: b$/fix: b (reworded)/' \"$1\"\n")
+    setFilePermissions(msgEditor, {fpUserRead, fpUserWrite, fpUserExec})
+
+    let base = run("git rev-parse HEAD~2", linked).output.strip()
+    let (rebaseOut, rebaseCode) = run(
+      "GIT_SEQUENCE_EDITOR=" & seqEditor & " GIT_EDITOR=" & msgEditor & " git rebase -i " &
+        base,
+      linked,
+    )
+    check rebaseCode == 0
+    check "Successfully rebased" in rebaseOut
+
+    let rebaseState =
+      run("git rev-parse --git-path rebase-merge", linked).output.strip()
+    check not dirExists(rebaseState)
+    check run("git status --porcelain", linked).output.strip().len == 0
+    check changeNotes(linked).len == 3
+    check "fix: b (reworded)" in run("git log --oneline", linked).output
+
   test "bump with no pending changes is a no-op":
     let dir = freshRepo("bump-empty")
     let (output, code) = run("nimver bump", dir)

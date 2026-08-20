@@ -35,6 +35,12 @@ defaults, see below) and a `.nimver/changes/` directory.
 and its contents should be committed to Git — the pending change notes
 need to survive across separate commits until you run `bump`.
 
+The hooks directory is resolved through Git, so `install-hooks` also works
+from a checkout whose `.git` is a file rather than a directory: a linked
+worktree (`git worktree add`), a submodule, or a clone made with
+`--separate-git-dir`. Git keeps a single hooks directory per repository, so
+installing from any worktree installs for all of them.
+
 ## Everyday use
 
 Just commit normally, using Conventional Commits syntax:
