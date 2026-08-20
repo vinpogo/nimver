@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+#
+# .agents/prepare - configures a checkout that Delta just created.
+#
+# This runs for *every* worktree, so it has to stay cheap: only local
+# filesystem checks and a couple of sub-100ms commands. No builds, no network,
+# no toolchain installs. If something needed here is missing, warn and move on
+# rather than blocking the worktree.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+log() { printf 'prepare: %s\n' "$*" >&2; }
+
+# --- mise ------------------------------------------------------------------
+# A new worktree is a new path, and mise refuses to load a config it has not
+# been told to trust - interactively prompting when a terminal is attached.
+# Trusting it here keeps this script, the agent's shell, and any `mise x` call
+# non-interactive.
+mise_config=false
+if command -v mise >/dev/null 2>&1; then
+  for cfg in mise.toml .mise.toml mise.local.toml .config/mise.toml .config/mise/config.toml; do
+    if [[ -f $cfg ]]; then
+      mise_config=true
+      break
+    fi
+  done
+fi
+
+if [[ $mise_config == true ]]; then
+  mise trust --yes --quiet >/dev/null 2>&1 || log "warning: 'mise trust' failed"
+fi
+
+# --- nimver ----------------------------------------------------------------
+# Nim projects in this workspace version themselves with nimver: Conventional
+# Commits are validated by a commit-msg hook, and the resulting bump level is
+# recorded by a post-commit hook. A fresh checkout has no hooks (git never
+# clones them), so install them here.
+
+shopt -s nullglob
+nimble_manifests=(*.nimble)
+shopt -u nullglob
+
+if [[ ! -f .nimver/config.ini ]]; then
+  if ((${#nimble_manifests[@]} > 0)); then
+    log "Nim project without .nimver/config.ini; run 'nimver init' to enable versioning"
+  fi
+  exit 0
+fi
+
+# nimver is installed into the nimble bin dir, which is only on PATH once the
+# repo's toolchain is active - ask mise for it if this shell does not have it.
+nimver_bin="$(command -v nimver 2>/dev/null || true)"
+if [[ -z $nimver_bin && $mise_config == true ]]; then
+  # MISE_AUTO_INSTALL=0: resolve what is already installed, never install.
+  nimver_bin="$(MISE_AUTO_INSTALL=0 mise which nimver 2>/dev/null || true)"
+fi
+if [[ -z $nimver_bin ]]; then
+  log "warning: nimver not found; hooks will look it up on PATH at commit time"
+  log "         install it with 'nimble install' from the nimver repo"
+  nimver_bin=nimver
+fi
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+  exit 0 # not a git checkout, so there is nowhere to put hooks
+fi
+
+# `git rev-parse --git-path` resolves the real hooks directory even when .git
+# is a gitfile (which it always is in a Delta checkout), unlike the plain
+# repoRoot/.git/hooks path that `nimver install-hooks` assumes.
+hooks_dir="$(git rev-parse --git-path hooks)"
+mkdir -p "$hooks_dir"
+
+# The hook bodies mirror `nimver install-hooks` (src/hooks.nim) rather than
+# shelling out to it: the hooks need the absolute path resolved above, since
+# the shell that runs them has no guarantee of an activated toolchain on
+# PATH. Writing them here also keeps a checkout working when nimver is not
+# installed yet, or is older than the release that taught `install-hooks`
+# about checkouts whose .git is a file.
+write_hook() {
+  local name=$1 body=$2
+  local path="$hooks_dir/$name"
+  if [[ -e $path ]] && ! grep -q nimver "$path"; then
+    log "warning: $name hook exists and is not ours; leaving it alone"
+    return
+  fi
+  printf '%s\n' "$body" >"$path"
+  chmod +x "$path"
+}
+
+write_hook commit-msg "$(
+  cat <<EOF
+#!/bin/sh
+# Installed by .agents/prepare; mirrors \`nimver install-hooks\`.
+# Do not edit by hand.
+NIMVER='${nimver_bin}'
+command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
+exec "\$NIMVER" check-commit-msg "\$1"
+EOF
+)"
+
+write_hook post-commit "$(
+  cat <<EOF
+#!/bin/sh
+# Installed by .agents/prepare; mirrors \`nimver install-hooks\`.
+# Do not edit by hand.
+#
+# Guard against re-entrancy: \`record-commit\` folds its note file into HEAD via
+# \`commit --amend\`, which triggers this same hook again.
+if [ -n "\$NIMVER_AMENDING" ]; then
+  exit 0
+fi
+NIMVER='${nimver_bin}'
+command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
+exec "\$NIMVER" record-commit
+EOF
+)"
