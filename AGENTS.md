@@ -41,9 +41,16 @@ level, so one stray `!` turns an entire release into a major.
 ## Change notes must match their commits
 
 The `post-commit` hook records a note under `.nimver/changes/` for the commit it
-runs on. Note recording is skipped during a rebase, so if you reword or relabel
-a commit, fix its note in the same pass (`bump=`, `breaking=` and the stored
-message) - otherwise the changelog contradicts the history.
+runs on, and rewrites it on amend. Rewording during a rebase is handled by
+`post-rewrite` once the rebase finishes, which re-records every rewritten commit
+and folds the corrections into HEAD - so relabelling `fix:` to `feat:` updates
+`bump=` on its own.
+
+Those hooks only run when they are installed: `.agents/prepare` writes them for
+a fresh checkout, and `nimver install-hooks --force` regenerates them. If you
+rewrite history with hooks bypassed (`NIMVER_AMENDING=1`, or a checkout without
+hooks), fix the affected notes yourself - otherwise the changelog contradicts
+the history.
 
 ## Everyday conventions
 

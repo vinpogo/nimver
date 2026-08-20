@@ -129,3 +129,21 @@ command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
 exec "\$NIMVER" record-commit
 EOF
 )"
+
+write_hook post-rewrite "$(
+  cat <<EOF
+#!/bin/sh
+${marker}
+# Regenerate by re-running .agents/prepare; mirrors \`nimver install-hooks\`.
+#
+# Runs once a rebase has finished rewriting commits. \`post-commit\` fires while
+# the rebase is still running, where amending would derail the sequencer, so
+# reworded commits get their notes corrected here instead.
+if [ -n "\$NIMVER_AMENDING" ]; then
+  exit 0
+fi
+NIMVER='${nimver_bin}'
+command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
+exec "\$NIMVER" record-rewrite "\$1"
+EOF
+)"

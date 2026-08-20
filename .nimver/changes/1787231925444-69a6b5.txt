@@ -1,0 +1,18 @@
+type=fix
+bump=patch
+breaking=false
+packages=root
+===
+fix: re-record change notes after a rebase
+
+post-commit stands down while a rebase runs, because amending there moves
+HEAD out from under the sequencer and aborts it. Nothing picked the work up
+afterwards, so a reworded commit kept the note recorded for its old message:
+retyping `fix:` to `feat:` left bump=patch behind and silently under-bumped
+the next release.
+
+A post-rewrite hook now runs once the rebase has finished, with the commits
+it rewrote, and re-records each of their notes. The corrections are folded
+into HEAD rather than into each rewritten commit, since moving a note back
+would mean rewriting history a second time and a release reads the set of
+pending notes, not which commit carries them.
