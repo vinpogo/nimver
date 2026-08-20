@@ -146,14 +146,48 @@ suite "hooks":
     let log = run("git log --oneline", dir).output
     check "fix: b (reworded)" in log
 
-    # Known, safe limitation: note recording is skipped entirely while a
-    # rebase is in progress (to avoid fighting the sequencer's own amend of
-    # the reworded commit - see `isRebaseInProgress`), so the pre-existing
-    # note for "fix: b" survives with its original text instead of being
-    # updated or duplicated.
-    check changeNotes(dir).anyIt(
+    # `post-commit` does nothing during the rebase, so `post-rewrite` catches
+    # up once it finishes: the note follows the reworded message.
+    check changeNotes(dir).anyIt("fix: b (reworded)" in readFile(it))
+    check not changeNotes(dir).anyIt(
       "fix: b" in readFile(it) and "reworded" notin readFile(it)
     )
+
+  test "a rebase that retypes a commit updates its bump level":
+    # The dangerous case: the message says `feat` while the note still says
+    # `fix`, which would silently under-bump the next release.
+    let dir = freshRepo("rebase-retype")
+    discard commitFile(dir, "a.txt", "hi", "fix: a change")
+    var notes = changeNotes(dir)
+    require notes.len == 1
+    check "bump=patch" in readFile(notes[0])
+
+    let seqEditor = TestRepoRoot / "rebase-retype-seq-editor.sh"
+    writeFile(seqEditor, "#!/bin/sh\nsed -i 's/^pick/reword/' \"$1\"\n")
+    setFilePermissions(seqEditor, {fpUserRead, fpUserWrite, fpUserExec})
+
+    let msgEditor = TestRepoRoot / "rebase-retype-msg-editor.sh"
+    writeFile(msgEditor, "#!/bin/sh\nsed -i '1s/.*/feat: a change/' \"$1\"\n")
+    setFilePermissions(msgEditor, {fpUserRead, fpUserWrite, fpUserExec})
+
+    let (_, rebaseCode) = run(
+      "GIT_SEQUENCE_EDITOR=" & seqEditor & " GIT_EDITOR=" & msgEditor &
+        " git rebase -i HEAD~1",
+      dir,
+    )
+    check rebaseCode == 0
+    check "feat: a change" in run("git log -1 --pretty=%s", dir).output
+
+    notes = changeNotes(dir)
+    require notes.len == 1
+    let content = readFile(notes[0])
+    check "type=feat" in content
+    check "bump=minor" in content
+    check "feat: a change" in content
+    check run("git status --porcelain", dir).output.strip().len == 0
+
+    # And the release that follows reflects the corrected level.
+    check "0.1.0 -> 0.2.0 (minor)" in run("nimver bump --dry-run", dir).output
 
   test "hooks install into the shared hooks directory from a linked worktree":
     # A linked worktree's `.git` is a *file* pointing at
@@ -170,14 +204,14 @@ suite "hooks":
 
     # Wipe the hooks installed by `freshRepo` so the install below is the
     # only thing that could have put them back.
-    removeFile(dir / ".git" / "hooks" / "commit-msg")
-    removeFile(dir / ".git" / "hooks" / "post-commit")
+    for hookName in ["commit-msg", "post-commit", "post-rewrite"]:
+      removeFile(dir / ".git" / "hooks" / hookName)
 
     r = run("nimver install-hooks", linked)
     check r.code == 0
     # Git shares one hooks directory across every worktree of a repository.
-    check fileExists(dir / ".git" / "hooks" / "commit-msg")
-    check fileExists(dir / ".git" / "hooks" / "post-commit")
+    for hookName in ["commit-msg", "post-commit", "post-rewrite"]:
+      check fileExists(dir / ".git" / "hooks" / hookName)
 
     r = run("nimver init", linked)
     check r.code == 0

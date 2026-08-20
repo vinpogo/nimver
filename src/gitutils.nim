@@ -40,44 +40,33 @@ proc gitCommit*(repoRoot: string, message: string) =
 proc gitTag*(repoRoot: string, tag: string) =
   discard runGit(@["-C", repoRoot, "tag", tag])
 
-proc gitLastCommitMessage*(repoRoot: string): string =
-  ## Full message (subject + body + footers) of the current HEAD commit.
-  runGit(@["-C", repoRoot, "log", "-1", "--pretty=%B"])
+proc gitCommitMessage*(repoRoot: string, revision = "HEAD"): string =
+  ## Full message (subject + body + footers) of a commit.
+  runGit(@["-C", repoRoot, "log", "-1", "--pretty=%B", revision])
 
-proc gitHeadChangedPaths*(repoRoot: string): seq[string] =
-  ## Repo-relative paths added/modified/deleted by HEAD, relative to its
-  ## parent (or, for a root commit, relative to the empty tree). Used to
-  ## check whether HEAD's own diff already contains a change-note file,
-  ## which happens whenever this `post-commit` event is amending a commit
-  ## that was already recorded rather than a brand-new commit.
+proc diffTreePaths(repoRoot, revision: string, extraArgs: seq[string]): seq[string] =
   let output = runGit(
-    @[
-      "-C", repoRoot, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
-      "HEAD",
-    ]
-  )
-  for line in output.splitLines():
-    let l = line.strip()
-    if l.len > 0:
-      result.add(l)
-
-proc gitHeadAddedPaths*(repoRoot: string): seq[string] =
-  ## Repo-relative paths *added* by HEAD. A change note recorded by a previous
-  ## `post-commit` shows up as an addition in its own commit, so this is what
-  ## identifies a stale note during an amend. Notes that a release commit
-  ## rewrites or deletes show up as modifications/deletions instead, and must
-  ## survive: an independent release leaves a note pending for the packages it
-  ## did not release.
-  let output = runGit(
-    @[
-      "-C", repoRoot, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
-      "--diff-filter=A", "HEAD",
-    ]
+    @["-C", repoRoot, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root"] &
+      extraArgs & @[revision]
   )
   for line in output.splitLines():
     let trimmedLine = line.strip()
     if trimmedLine.len > 0:
       result.add(trimmedLine)
+
+proc gitChangedPaths*(repoRoot: string, revision = "HEAD"): seq[string] =
+  ## Repo-relative paths added/modified/deleted by a commit, relative to its
+  ## parent (or, for a root commit, relative to the empty tree).
+  diffTreePaths(repoRoot, revision, @[])
+
+proc gitAddedPaths*(repoRoot: string, revision = "HEAD"): seq[string] =
+  ## Repo-relative paths *added* by a commit. A change note recorded by a
+  ## previous `post-commit` shows up as an addition in its own commit, so this
+  ## is what identifies the note belonging to that commit. Notes that a release
+  ## commit rewrites or deletes show up as modifications/deletions instead, and
+  ## must survive: an independent release leaves a note pending for the packages
+  ## it did not release.
+  diffTreePaths(repoRoot, revision, @["--diff-filter=A"])
 
 proc gitAmendNoVerify*(repoRoot: string) =
   ## Folds currently staged changes into HEAD without re-running hooks other

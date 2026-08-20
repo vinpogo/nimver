@@ -29,6 +29,7 @@ releases that one package. A `fixed` workspace always releases every package.
 Invoked by installed hooks (not usually run by hand):
   nimver check-commit-msg <path-to-message-file>
   nimver record-commit
+  nimver record-rewrite <rebase|amend>
 """
 
 proc cmdVersion() =
@@ -48,6 +49,7 @@ proc cmdInstallHooks(repoRoot: string, force: bool) =
   let hooksDir = installHooks(repoRoot, force)
   echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
   echo "Installed post-commit hook at ", hooksDir / "post-commit"
+  echo "Installed post-rewrite hook at ", hooksDir / "post-rewrite"
 
 proc validateAndLookup(cfg: Config, parsed: ParsedCommit): (bool, string, BumpLevel) =
   ## Returns `(ok, errorMessage, bumpLevel)`.
@@ -78,6 +80,53 @@ proc cmdCheckCommitMsg(repoRoot: string, msgFilePath: string) =
     stderr.writeLine("nimver: " & typeErr)
     quit(1)
 
+proc syncNoteForCommit(
+    repoRoot: string, cfg: Config, projectWorkspace: Workspace, revision: string
+): bool =
+  ## Brings the change note recorded for `revision` in line with that commit's
+  ## message, and reports whether the working tree changed.
+  ##
+  ## The note a commit recorded shows up as an *addition* in its own diff, so
+  ## that is what gets replaced. Only additions count: a release commit
+  ## legitimately rewrites notes still pending for other packages, and those
+  ## must survive. Rebuilding from the message rather than patching it means a
+  ## reword that changes the type (`fix:` -> `feat:`) fixes the bump level too.
+  var dirty = false
+  for path in gitAddedPaths(repoRoot, revision):
+    if path.startsWith(ChangesRelPrefix) and path.endsWith(".txt"):
+      let notePath = repoRoot / path
+      if fileExists(notePath):
+        removeFile(notePath)
+        dirty = true
+
+  let (ok, err, parsed) = parseCommitMessage(gitCommitMessage(repoRoot, revision))
+  if not ok:
+    stderr.writeLine("nimver: skipping unparseable commit: " & err)
+    return dirty
+
+  let (validType, typeErr, bumpLevel) = validateAndLookup(cfg, parsed)
+  if not validType:
+    stderr.writeLine("nimver: skipping commit: " & typeErr)
+    return dirty
+  if bumpLevel == blIgnore:
+    return dirty
+
+  let affectedPackages =
+    affectedPackageNames(projectWorkspace, gitChangedPaths(repoRoot, revision))
+  if affectedPackages.len == 0:
+    return dirty
+
+  discard writeChangeFile(
+    repoRoot, parsed.commitType, bumpLevel, parsed.breaking, affectedPackages,
+    parsed.rawMessage,
+  )
+  true
+
+proc foldNotesIntoHead(repoRoot: string) =
+  gitAdd(repoRoot, changesDir(repoRoot))
+  putEnv("NIMVER_AMENDING", "1")
+  gitAmendNoVerify(repoRoot)
+
 proc cmdRecordCommit(repoRoot: string) =
   ## Runs as the `post-commit` hook. Writes the bump-note file for the
   ## commit that was just created and folds it into that same commit via a
@@ -85,57 +134,44 @@ proc cmdRecordCommit(repoRoot: string) =
   ## guard).
   if isRebaseInProgress(repoRoot):
     # Amending here would fight with the rebase sequencer's own bookkeeping
-    # (see `isRebaseInProgress`). Leave existing notes untouched; review
-    # `.nimver/changes` once the rebase completes if any
-    # reworded commits should have their notes updated.
-    stderr.writeLine(
-      "nimver: skipping change-note recording during an in-progress rebase"
-    )
-    return
-
-  let raw = gitLastCommitMessage(repoRoot)
-  let (ok, err, parsed) = parseCommitMessage(raw)
-  if not ok:
-    stderr.writeLine("nimver: skipping unparseable commit: " & err)
+    # (see `isRebaseInProgress`). The `post-rewrite` hook picks the work up
+    # once the rebase has finished.
     return
 
   let cfg = loadConfig(repoRoot)
-  let (validType, typeErr, bumpLevel) = validateAndLookup(cfg, parsed)
-  if not validType:
-    stderr.writeLine("nimver: skipping commit: " & typeErr)
-    return
   let projectWorkspace = loadWorkspace(repoRoot, cfg)
-  let changedPaths = gitHeadChangedPaths(repoRoot)
-  let affectedPackages = affectedPackageNames(projectWorkspace, changedPaths)
+  if syncNoteForCommit(repoRoot, cfg, projectWorkspace, "HEAD"):
+    foldNotesIntoHead(repoRoot)
 
-  # If HEAD *added* a change-note file, this call is amending a commit that was
-  # already recorded rather than a brand-new commit - remove the stale note
-  # (whatever its previously recorded type was) before writing a fresh one.
-  # Checking the commit's actual diff (rather than tracking hashes) also means a
-  # reword that changes the commit's type (e.g. `fix:` -> `feat:`) is handled
-  # correctly for free. Only additions count: a release commit legitimately
-  # rewrites notes that are still pending for other packages.
+proc cmdRecordRewrite(repoRoot, rewriteKind: string) =
+  ## Runs as the `post-rewrite` hook, once `git rebase` has finished replaying
+  ## commits. Git feeds `<old> <new>` pairs on stdin.
+  ##
+  ## This is where reworded commits get their notes corrected: `post-commit`
+  ## fires *during* the rebase, when amending would derail the sequencer. The
+  ## corrected notes are folded into HEAD rather than into each rewritten
+  ## commit - moving them back would mean rewriting history a second time,
+  ## and what a release reads is the set of pending notes, not which commit
+  ## carries them.
+  if rewriteKind == "amend":
+    return # `post-commit` already re-recorded that commit
+
+  let cfg = loadConfig(repoRoot)
+  let projectWorkspace = loadWorkspace(repoRoot, cfg)
+
+  var rewrittenRevisions: seq[string] = @[]
+  for line in stdin.lines:
+    let fields = line.splitWhitespace()
+    if fields.len >= 2:
+      rewrittenRevisions.add(fields[1])
+
   var dirty = false
-  for path in gitHeadAddedPaths(repoRoot):
-    if path.startsWith(ChangesRelPrefix) and path.endsWith(".txt"):
-      let full = repoRoot / path
-      if fileExists(full):
-        removeFile(full)
-        dirty = true
+  for revision in rewrittenRevisions:
+    if syncNoteForCommit(repoRoot, cfg, projectWorkspace, revision):
+      dirty = true
 
-  if bumpLevel != blIgnore and affectedPackages.len > 0:
-    discard writeChangeFile(
-      repoRoot, parsed.commitType, bumpLevel, parsed.breaking, affectedPackages,
-      parsed.rawMessage,
-    )
-    dirty = true
-
-  if not dirty:
-    return
-
-  gitAdd(repoRoot, changesDir(repoRoot))
-  putEnv("NIMVER_AMENDING", "1")
-  gitAmendNoVerify(repoRoot)
+  if dirty:
+    foldNotesIntoHead(repoRoot)
 
 proc highestBumpLevel(entries: seq[ChangeEntry]): BumpLevel =
   result = blNone
@@ -373,6 +409,14 @@ when isMainModule:
       cmdCheckCommitMsg(repoRoot, args[1])
     of "record-commit":
       cmdRecordCommit(repoRoot)
+    of "record-rewrite":
+      cmdRecordRewrite(
+        repoRoot,
+        if args.len > 1:
+          args[1]
+        else:
+          "",
+      )
     of "bump":
       var requestedPackageName = ""
       for arg in args[1 .. ^1]:

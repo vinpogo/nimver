@@ -30,7 +30,7 @@ nimver install-hooks
 
 `init` creates `.nimver/config.ini` (pre-populated with sensible
 defaults, see below) and a `.nimver/changes/` directory.
-`install-hooks` writes a `commit-msg` and a `post-commit` hook into
+`install-hooks` writes `commit-msg`, `post-commit` and `post-rewrite` hooks into
 `.git/hooks/` that delegate to this binary. Both `.nimver/`
 and its contents should be committed to Git — the pending change notes
 need to survive across separate commits until you run `bump`.
@@ -82,7 +82,10 @@ BREAKING CHANGE: describe the break
   `type` isn't one of the types listed in `.nimver/config.ini`.
 - The `post-commit` hook then determines the bump level for the commit and
   records it under `.nimver/changes/`, amending it into the
-  commit that was just created so history stays tidy.
+  commit that was just created so history stays tidy. Amending a commit
+  re-records its note, so changing `fix:` to `feat:` also corrects the bump.
+- The `post-rewrite` hook does the same after a rebase finishes, for every
+  commit it rewrote.
 - A `!` after the type/scope (`feat!:`) or a `BREAKING CHANGE:` footer always
   forces a `major` bump, regardless of what the type is configured to do.
 
@@ -276,9 +279,10 @@ nimver version
 Invoked by installed hooks (not usually run by hand):
   nimver check-commit-msg <path-to-message-file>
   nimver record-commit
+  nimver record-rewrite <rebase|amend>
 ```
 
-## Why two hooks?
+## Why three hooks?
 
 A commit's tree is already fixed by the time `commit-msg` runs, so a file
 written and staged there does not end up in the commit being created — it
@@ -286,3 +290,11 @@ would only surface in whatever commit comes next. To keep each commit
 self-contained, `commit-msg` is used purely for validation (and can reject
 the commit), while `post-commit` writes the actual bump-note file for the
 commit that was just made and folds it in via a guarded `git commit --amend`.
+
+`post-commit` also fires for each commit a rebase replays, but amending there
+would move HEAD out from under the rebase sequencer and abort it, so it stands
+down while a rebase is running. `post-rewrite` runs once the rebase is over,
+with the list of commits it rewrote, and re-records their notes then. The
+corrections are folded into HEAD rather than into each rewritten commit: moving
+a note back to its own commit would mean rewriting history a second time, and a
+release reads the set of pending notes, not which commit carries them.

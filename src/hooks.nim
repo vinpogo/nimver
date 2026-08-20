@@ -7,6 +7,9 @@
 ##   - `commit-msg` only validates the message and can reject the commit.
 ##   - `post-commit` writes the bump-note file for the commit that was just
 ##     created and folds it in via a guarded `commit --amend`.
+##   - `post-rewrite` re-records notes after a rebase, which `post-commit`
+##     cannot do: it fires while the rebase is still running, where amending
+##     would derail the sequencer.
 
 import std/os
 import ./gitutils
@@ -27,6 +30,18 @@ if [ -n "$NIMVER_AMENDING" ]; then
   exit 0
 fi
 exec nimver record-commit
+"""
+
+const PostRewriteHook = """#!/bin/sh
+# Installed by nimver. Do not edit by hand;
+# re-run `nimver install-hooks --force` to regenerate.
+#
+# Runs once a rebase has finished rewriting commits, so notes reworded along
+# the way can be brought back in line with their messages.
+if [ -n "$NIMVER_AMENDING" ]; then
+  exit 0
+fi
+exec nimver record-rewrite "$1"
 """
 
 const ExecutablePerms = {
@@ -56,4 +71,5 @@ proc installHooks*(repoRoot: string, force: bool): string =
 
   writeHook(hooksDir, "commit-msg", CommitMsgHook, force)
   writeHook(hooksDir, "post-commit", PostCommitHook, force)
+  writeHook(hooksDir, "post-rewrite", PostRewriteHook, force)
   hooksDir
