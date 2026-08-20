@@ -230,10 +230,23 @@ your own types (and adjust bump levels) as needed.
 nimble test
 ```
 
-This builds the binary, then runs `tests/test_e2e.nim`, an end-to-end suite
-that drives real `git` + `nimver` invocations against throwaway
-repos created under `testRepo/` (gitignored). Each test starts from a fresh
-repo, so it's always safe to delete `testRepo/` between runs.
+This builds the binary, then runs each `tests/test_*.nim` suite:
+
+| Suite | Covers |
+| --- | --- |
+| `test_hooks.nim` | commit validation, note recording, amends, rebases |
+| `test_manifests.nim` | manifest detection and version-only edits |
+| `test_bump.nim` | releasing a single detected manifest |
+| `test_workspace.nim` | attributing changed files to packages |
+| `test_strategies.nim` | `fixed` and `independent` releases |
+
+`tests/support.nim` holds the shared fixtures. Every test drives real `git` +
+`nimver` invocations against a throwaway repo created under the system temp
+directory (override with `NIMVER_TEST_DIR`), and each starts from a fresh repo.
+
+Watch the output rather than the exit status: `nimble test` always exits 0,
+because nimble swallows a failing task (v0.22.2). The task prints a
+`Failing suites:` summary at the end when something fails.
 
 ## CLI reference
 
