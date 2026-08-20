@@ -61,13 +61,37 @@ suite "manifest adapters":
     check "0.1.0 -> 0.1.1" in output
     check "\"version\": \"0.1.1\"" in readFile(packagePath)
 
-  test "bump rejects an ambiguous Nimble and package.json repository":
-    let dir = freshPackageRepo("bump-ambiguous")
+  test "sibling manifests are versioned together, with a warning":
+    # Nothing in the config says how two root manifests relate, so nimver
+    # assumes they are one release unit rather than picking one silently.
+    let dir = freshPackageRepo("sibling-manifests")
     writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
+
+    let (output, code) = run("nimver bump --no-tag", dir)
+    check code == 0
+    check "assuming strategy = fixed" in output
+    check "pkg.nimble" in output
+    check "package.json" in output
+
+    # Both manifests move to the same next version.
+    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
+    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: v0.1.1"
+
+  test "sibling manifests are rejected when the strategy is independent":
+    let dir = freshPackageRepo("sibling-manifests-independent")
+    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    let configPath = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath, readFile(configPath) & "\n[workspace]\nstrategy = independent\n"
+    )
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
     let (output, code) = run("nimver bump --no-commit --no-tag", dir)
     check code != 0
-    check "Both Nimble and package.json manifests were found" in output
-    check "\"version\": \"0.1.0\"" in readFile(dir / "package.json")
+    check "Invalid configuration" in output
+    check "both live in the repository root" in output
+    check "strategy = fixed" in output
     check "version = \"0.1.0\"" in readFile(dir / "pkg.nimble")

@@ -41,6 +41,30 @@ suite "workspace attribution":
     require notes.len == 1
     check "packages=cli" in readFile(notes[0])
 
+  test "sourceFiles override nearest-manifest attribution":
+    # `docs/` sits outside both packages, so nearest-ancestor alone would hand
+    # it to sharedChanges; an explicit pattern claims it for `web` instead.
+    let dir = freshWorkspaceRepo("workspace-source-files")
+    let configPath = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath,
+      readFile(configPath).replace(
+        "[package.web]\nmanifest = packages/web/package.json\n",
+        "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = packages/web/**, docs/**\n",
+      ),
+    )
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: claim docs for web\"", dir)
+
+    createDir(dir / "docs")
+    let (_, code) = commitFile(dir, "docs/guide.md", "# Guide\n", "feat: document web")
+    check code == 0
+
+    # The config commit above records a note of its own, so pick out this one.
+    let notes = changeNotes(dir).filterIt("feat: document web" in readFile(it))
+    require notes.len == 1
+    check "packages=web" in readFile(notes[0])
+
   test "nested packages attribute changes to the nearest manifest":
     let dir =
       freshWorkspaceRepo("workspace-nearest-manifest", includeRootPackage = true)

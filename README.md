@@ -57,9 +57,13 @@ shared source editor replaces only that value.
 Package-manager lockfiles are currently left unchanged. This is correct for
 pnpm, whose lockfile does not record the root package's own version. Lockfiles
 that duplicate the root version, such as `package-lock.json`, will need a
-separate lockfile adapter. If both a `.nimble` file and `package.json` are
-present, `nimver` stops and reports the ambiguity rather than choosing one
-implicitly.
+separate lockfile adapter.
+
+A repository root holding several manifests — say a `.nimble` next to a
+`package.json` — is treated as one release unit: they all move to the same
+version, as though `strategy = fixed` had been configured. nimver warns when it
+assumes this, so declare the packages in `.nimver/config.ini` to make it
+explicit.
 
 ## Everyday use
 
@@ -121,6 +125,14 @@ manifest = packages/web/package.json
 manifest = packages/cli/cli.nimble
 ```
 
+`sourceFiles` is optional per package and narrows what that package claims:
+
+```ini
+[package.web]
+manifest = packages/web/package.json
+sourceFiles = packages/web/**, docs/**
+```
+
 ### Strategies
 
 `strategy = independent` is the default: each package keeps its own version, so
@@ -174,10 +186,14 @@ packages/web/src/button.ts   -> web
 packages/cli/src/main.nim    -> cli
 ```
 
-Each package needs its own directory; two manifests in one directory are
-rejected, since the nearest ancestor would be ambiguous. A manifest at the
-repository root therefore acts as a catch-all for everything not inside a more
-specific package.
+Where `sourceFiles` is set, it wins over the nearest-ancestor rule; the patterns
+of two packages must not overlap. A package's own manifest always belongs to it.
+
+A manifest at the repository root acts as a catch-all for everything not inside
+a more specific package. Two packages may share a directory only under
+`strategy = fixed`, where they move together anyway. Under `independent` that is
+rejected: the packages would be released separately, yet a change in the shared
+directory could belong to either one, and `sourceFiles` cannot be inferred.
 
 nimver does not filter files within a package (docs, fixtures, examples). Use
 commit types for that: a `docs:` or `chore:` commit is mapped to `none` by
