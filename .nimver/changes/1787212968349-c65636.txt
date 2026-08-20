@@ -1,6 +1,0 @@
-type=feat
-bump=minor
-breaking=false
-packages=root
-===
-feat: add fixed workspace versioning

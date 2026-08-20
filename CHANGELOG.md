@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.1.0] - 2026-08-20
+
+### Features
+- add manifest adapters
+- add fixed workspace versioning
+- add independent workspace versioning
+- version sibling manifests together
+
+### Tests
+- split the end-to-end suite into focused files
+
+### Chores
+- add .agents/prepare checkout script
+
+### Fixes
+- resolve Git directory paths through git rev-parse
+- only replace git hooks that carry a generated-by marker
+- re-record change notes after a rebase
+
+### Documentation
+- record how breaking changes are assessed
+
+### Refactoring
+- tag releases by package only when several exist
+
 ## [2.0.0] - 2026-08-12
 
 ### Breaking Changes
