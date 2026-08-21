@@ -1,0 +1,8 @@
+type=refactor
+bump=patch
+breaking=false
+packages=root
+===
+refactor: humanize parseCommitMessage
+
+
