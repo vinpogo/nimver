@@ -26,7 +26,7 @@ type
 
   Workspace* = object
     strategy*: WorkspaceStrategy
-    sharedChanges*: SharedChangesPolicy
+    sharedChanges*: SharedChangesKind
     packages*: seq[WorkspacePackage]
 
 proc normalizeRepoPath(path: string): string =
@@ -117,8 +117,8 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
     for detectedManifest in detectedManifests:
       let manifestRelativePath =
         normalizeRepoPath(relativePath(detectedManifest.filePath, repoRoot))
-      # A lone manifest keeps the name `root`, which is what release naming and
-      # `sharedChanges = package.root` refer to.
+      # A lone manifest keeps the name `root`, which is what release naming
+      # refers to.
       let packageName = if detectedManifests.len == 1: "root" else: manifestRelativePath
       result.packages.add(
         newWorkspacePackage(packageName, manifestRelativePath, detectedManifest)
@@ -238,14 +238,12 @@ proc affectedPackageNames*(
     if owningIndex >= 0:
       affectedPackageNames.incl(workspace.packages[owningIndex].name)
     else:
-      case workspace.sharedChanges.kind
+      case workspace.sharedChanges
       of scAll:
         for package in workspace.packages:
           affectedPackageNames.incl(package.name)
       of scNone:
         discard
-      of scPackage:
-        affectedPackageNames.incl(workspace.sharedChanges.packageName)
 
   for package in workspace.packages:
     if package.name in affectedPackageNames:
