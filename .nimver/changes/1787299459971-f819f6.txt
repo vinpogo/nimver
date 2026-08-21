@@ -1,6 +1,0 @@
-type=feat
-bump=minor
-breaking=false
-packages=root
-===
-feat: allow `bump` to bump all independent packages at once
