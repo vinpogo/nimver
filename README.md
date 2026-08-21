@@ -13,11 +13,8 @@ entry to `CHANGELOG.md`.
 ## Install
 
 ```sh
-nimble install
+nimble install nimver
 ```
-
-This builds the `nimver` binary and puts it on your Nimble
-bin path, which needs to be on `PATH` for the Git hooks to find it.
 
 ## Setup (per repository)
 
@@ -35,35 +32,12 @@ defaults, see below) and a `.nimver/changes/` directory.
 and its contents should be committed to Git — the pending change notes
 need to survive across separate commits until you run `bump`.
 
-The hooks directory is resolved through Git, so `install-hooks` also works
-from a checkout whose `.git` is a file rather than a directory: a linked
-worktree (`git worktree add`), a submodule, or a clone made with
-`--separate-git-dir`. Git keeps a single hooks directory per repository, so
-installing from any worktree installs for all of them.
-
 ## Supported project manifests
 
 `nimver bump` currently supports:
 
-- A `.nimble` file at the repository root.
-- A root `package.json`.
-
-A `package.json` project is detected directly from its root manifest, regardless
-of whether it uses pnpm, npm, Yarn, Bun, or another package manager. The
-top-level `version` string is updated without reformatting the rest of the file.
-Manifest adapters locate the exact version value in their source format, and a
-shared source editor replaces only that value.
-
-Package-manager lockfiles are currently left unchanged. This is correct for
-pnpm, whose lockfile does not record the root package's own version. Lockfiles
-that duplicate the root version, such as `package-lock.json`, will need a
-separate lockfile adapter.
-
-A repository root holding several manifests — say a `.nimble` next to a
-`package.json` — is treated as one release unit: they all move to the same
-version, as though `strategy = fixed` had been configured. nimver warns when it
-assumes this, so declare the packages in `.nimver/config.ini` to make it
-explicit.
+- `.nimble`
+- `package.json`.
 
 ## Everyday use
 
@@ -78,17 +52,6 @@ optional footer, e.g.:
 BREAKING CHANGE: describe the break
 ```
 
-- The `commit-msg` hook rejects the commit if the header doesn't parse, or if
-  `type` isn't one of the types listed in `.nimver/config.ini`.
-- The `post-commit` hook then determines the bump level for the commit and
-  records it under `.nimver/changes/`, amending it into the
-  commit that was just created so history stays tidy. Amending a commit
-  re-records its note, so changing `fix:` to `feat:` also corrects the bump.
-- The `post-rewrite` hook does the same after a rebase finishes, for every
-  commit it rewrote.
-- A `!` after the type/scope (`feat!:`) or a `BREAKING CHANGE:` footer always
-  forces a `major` bump, regardless of what the type is configured to do.
-
 When you're ready to cut a release:
 
 ```sh
@@ -99,23 +62,10 @@ nimver bump --no-tag              # commit the release, but skip the git tag
 nimver bump --no-commit --no-tag  # only touch the manifest/CHANGELOG.md, no git activity
 ```
 
-By default `bump` both creates a `version: vX.Y.Z` release commit and tags it
-`vX.Y.Z`. Pass `--no-commit` and/or `--no-tag` to opt out of either. Tagging
-requires a release commit to point at, so `--no-commit` alone (without
-`--no-tag`) skips the tag too, with a message explaining why.
-
-`bump` reads every pending file in `.nimver/changes/`, takes the
-highest bump level among them (major > minor > patch > none — levels are
-never added together), applies it to the version currently in your project
-manifest, writes a new `CHANGELOG.md` section grouped by commit type (with any
-breaking changes called out first), and deletes the consumed change files.
-If nothing pending would actually change the version (e.g. only `chore`/`docs`
-commits since the last release), it exits without touching anything.
-
 ## Workspaces
 
 Repositories with multiple packages must list them explicitly in
-`.nimver/config.ini`. Each package only declares its version manifest:
+`.nimver/config.ini`:
 
 ```ini
 [workspace]
