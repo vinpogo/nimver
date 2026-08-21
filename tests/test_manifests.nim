@@ -106,7 +106,10 @@ suite "manifest adapters":
     let (tags, _) = run("git tag", dir)
     check tags.strip() == "v0.1.1"
 
-  test "sibling manifests are rejected when the strategy is independent":
+  test "sibling manifests are released separately when the strategy is independent":
+    # An explicit strategy is honoured rather than overridden, but detected
+    # packages are named after their manifest paths - which is what the warning
+    # nudges you to fix by declaring them.
     let dir = freshPackageRepo("sibling-manifests-independent")
     writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
     let configPath = dir / ".nimver" / "config.ini"
@@ -116,8 +119,15 @@ suite "manifest adapters":
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
     let (output, code) = run("nimver bump --no-commit --no-tag", dir)
-    check code != 0
-    check "Invalid configuration" in output
-    check "both live in the repository root" in output
-    check "strategy = fixed" in output
-    check "version = \"0.1.0\"" in readFile(dir / "pkg.nimble")
+    check code == 0
+    check "releasing them independently" in output
+    check "assuming strategy = fixed" notin output
+
+    # Each moves on its own, and both are named in the changelog they share,
+    # since a bare version could not say which manifest it belongs to.
+    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
+    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    let changelog = readFile(dir / "CHANGELOG.md")
+    check "## [package.json 0.1.1]" in changelog
+    check "## [pkg.nimble 0.1.1]" in changelog
+    check changelog.find("## [package.json") < changelog.find("## [pkg.nimble")

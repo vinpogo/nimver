@@ -4,8 +4,9 @@
 ## ancestor: the longest matching package directory wins. A package may narrow
 ## that with explicit `sourceFiles` patterns, which take precedence.
 ##
-## Packages sharing a directory are only coherent under `fixed`, where every
-## package moves to the same version anyway.
+## Packages sharing a directory tie for nearest ancestor, so a file in it
+## belongs to no single package and follows the `sharedChanges` policy instead.
+## `sourceFiles` is what tells such siblings' sources apart.
 
 import std/[os, sets, strutils, tables]
 import ./changes
@@ -101,27 +102,6 @@ proc packageNames*(workspace: Workspace): seq[string] =
   for package in workspace.packages:
     result.add(package.name)
 
-proc validateIndependentPackagesAreSeparable(packages: seq[WorkspacePackage]) =
-  ## Under `independent` each package is released on its own, so every change
-  ## has to belong to exactly one of them. Two manifests in the same directory
-  ## make that undecidable, so the configuration is rejected outright.
-  var packageNamesByDirectory = initTable[string, string]()
-  for package in packages:
-    if packageNamesByDirectory.hasKey(package.rootDirectory):
-      let directoryLabel =
-        if package.rootDirectory.len == 0:
-          "the repository root"
-        else:
-          "'" & package.rootDirectory & "'"
-      raise newException(
-        IOError,
-        "Invalid configuration: packages '" &
-          packageNamesByDirectory[package.rootDirectory] & "' and '" & package.name &
-          "' both live in " & directoryLabel &
-          ". With strategy = independent each package is released separately, so a change in that directory could belong to either one and nimver cannot tell them apart. Give each package its own directory, or use strategy = fixed to release them together.",
-      )
-    packageNamesByDirectory[package.rootDirectory] = package.name
-
 proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
@@ -145,16 +125,22 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
       )
 
     if detectedManifests.len > 1:
-      # Siblings cannot be told apart by nearest ancestor, so they can only be
-      # released together. Say so rather than guessing silently.
+      # Nothing in the config says how detected siblings relate, and nearest
+      # ancestor cannot tell them apart, so release them together unless the
+      # config asked for separate releases outright.
       if config.strategyWasSpecified and config.workspaceStrategy == wsIndependent:
-        validateIndependentPackagesAreSeparable(result.packages)
-      result.strategy = wsFixed
-      stderr.writeLine(
-        "nimver: found " & $detectedManifests.len & " manifests in the repository root (" &
-          result.packageNames().join(", ") &
-          "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
-      )
+        stderr.writeLine(
+          "nimver: found " & $detectedManifests.len &
+            " manifests in the repository root (" & result.packageNames().join(", ") &
+            "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
+        )
+      else:
+        result.strategy = wsFixed
+        stderr.writeLine(
+          "nimver: found " & $detectedManifests.len &
+            " manifests in the repository root (" & result.packageNames().join(", ") &
+            "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
+        )
     return
 
   for packageConfig in config.packages:
@@ -167,9 +153,6 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
         packageConfig.sourceFilePatterns,
       )
     )
-
-  if result.strategy == wsIndependent:
-    validateIndependentPackagesAreSeparable(result.packages)
 
 proc findPackage*(workspace: Workspace, name: string): WorkspacePackage =
   for package in workspace.packages:
@@ -194,14 +177,24 @@ proc containsPath(packageRootDirectory, changedPath: string): bool =
 
 proc nearestPackageIndex(workspace: Workspace, changedPath: string): int =
   ## Index of the package whose manifest is the nearest ancestor of
-  ## `changedPath`, or -1 when the file sits outside every package.
+  ## `changedPath`, or -1 when the file sits outside every package - or when
+  ## packages sharing a directory tie for nearest, which leaves the file
+  ## unattributable and hands it to `sharedChanges`.
   result = -1
+  var nearestDepth = -1
+  var tied = false
   for packageIndex, package in workspace.packages:
-    if package.rootDirectory.containsPath(changedPath) and (
-      result == -1 or
-      package.rootDirectory.len > workspace.packages[result].rootDirectory.len
-    ):
+    if not package.rootDirectory.containsPath(changedPath):
+      continue
+    let depth = package.rootDirectory.len
+    if depth > nearestDepth:
+      nearestDepth = depth
       result = packageIndex
+      tied = false
+    elif depth == nearestDepth:
+      tied = true
+  if tied:
+    result = -1
 
 proc owningPackageIndex(workspace: Workspace, changedPath: string): int =
   ## Explicit `sourceFiles` win, then the manifest itself, then the nearest

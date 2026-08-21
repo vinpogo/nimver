@@ -182,11 +182,24 @@ proc highestBumpLevel(entries: seq[ChangeEntry]): BumpLevel =
 
 proc changelogPathFor(repoRoot: string, package: WorkspacePackage): string =
   ## An independently versioned package keeps its changelog next to its
-  ## manifest, since its version moves on its own schedule.
+  ## manifest, since its version moves on its own schedule. Sibling manifests
+  ## resolve to the same path and therefore share one changelog.
   if package.rootDirectory.len == 0:
     repoRoot / "CHANGELOG.md"
   else:
     repoRoot / package.rootDirectory / "CHANGELOG.md"
+
+proc changelogPackageLabelFor(
+    repoRoot: string, projectWorkspace: Workspace, package: WorkspacePackage
+): string =
+  ## Packages sharing a changelog have to name themselves in it: a bare version
+  ## would not say which of them moved. A package with a changelog of its own
+  ## keeps the plain `## [1.2.0]` heading.
+  let changelogPath = changelogPathFor(repoRoot, package)
+  for other in projectWorkspace.packages:
+    if other.name != package.name and changelogPathFor(repoRoot, other) == changelogPath:
+      return package.name
+  ""
 
 proc hasSeveralPackages(projectWorkspace: Workspace): bool =
   ## Tags and release commits are namespaced only once there is more than one
@@ -311,9 +324,30 @@ proc planRelease(
 
   result.current = readVersion(package.manifest)
   result.next = bump(result.current, result.level)
-  result.section = buildSection(result.next, result.entries)
+  result.section = buildSection(
+    result.next,
+    result.entries,
+    changelogPackageLabelFor(repoRoot, projectWorkspace, package),
+  )
   result.changelogPath = changelogPathFor(repoRoot, package)
   result.tag = releaseTagFor(projectWorkspace, package, result.next)
+
+type ChangelogWrite = object
+  ## One changelog file and everything this run prepends to it. Packages that
+  ## share a file are folded into a single write: prepending once per release
+  ## would push each section above the one written a moment earlier, so the
+  ## file would end up in reverse order.
+  path: string
+  text: string
+
+proc changelogWrites(releases: seq[PackageRelease]): seq[ChangelogWrite] =
+  var writeIndexByPath = initTable[string, int]()
+  for release in releases:
+    if writeIndexByPath.hasKey(release.changelogPath):
+      result[writeIndexByPath[release.changelogPath]].text.add("\n" & release.section)
+    else:
+      writeIndexByPath[release.changelogPath] = result.len
+      result.add(ChangelogWrite(path: release.changelogPath, text: release.section))
 
 proc consumeChangeNotes(projectWorkspace: Workspace, releases: seq[PackageRelease]) =
   ## A note shared by several packages is only spent for the ones being
@@ -362,6 +396,14 @@ proc bumpIndependentPackages(
     if release.isReleasable():
       releases.add(release)
 
+  # One order for everything a run emits - changelog sections, progress lines,
+  # tags, the commit subject - so releasing the same set of packages reads the
+  # same way every time, whatever order the config declares them in.
+  releases.sort(
+    proc(first, second: PackageRelease): int =
+      cmp(first.package.name, second.package.name)
+  )
+
   if releases.len == 0:
     if anyPending:
       echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
@@ -393,21 +435,24 @@ proc bumpIndependentPackages(
       echo release.section
     return
 
+  let changelogs = changelogWrites(releases)
   for release in releases:
     writeVersion(release.package.manifest, release.next)
-    prependToChangelog(release.changelogPath, release.section)
     echo "Updated ",
       release.package.manifest.filePath,
       " (",
       release.package.manifest.displayName(),
       ")"
-    echo "Updated ", release.changelogPath
+  for changelog in changelogs:
+    prependToChangelog(changelog.path, changelog.text)
+    echo "Updated ", changelog.path
   consumeChangeNotes(projectWorkspace, releases)
 
   if doCommit:
     for release in releases:
       gitAdd(repoRoot, release.package.manifest.filePath)
-      gitAdd(repoRoot, release.changelogPath)
+    for changelog in changelogs:
+      gitAdd(repoRoot, changelog.path)
     gitAdd(repoRoot, changesDir(repoRoot))
     gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
     echo "Created release commit."

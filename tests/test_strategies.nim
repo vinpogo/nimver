@@ -2,6 +2,9 @@
 ## version, `independent` (the default) gives each package its own version.
 ## Either way a bare `nimver bump` releases every package with pending changes;
 ## under `independent` a package name narrows the release to that one.
+##
+## The last suite covers sibling manifests, which live in one directory and so
+## share the changelog that sits beside them.
 
 import std/[unittest, os, strutils]
 import ./support
@@ -135,8 +138,9 @@ suite "workspace strategies":
     check changeNotes(dir).len == 0
 
     # One release commit, carrying one tag per released package.
+    # Alphabetical by package name, not the order the config declares them in.
     let (subject, _) = run("git log -1 --pretty=%s", dir)
-    check subject.strip() == "version: web-v0.2.0, cli-v0.1.1"
+    check subject.strip() == "version: cli-v0.1.1, web-v0.2.0"
     let (changedFiles, _) = run("git show --pretty=format: --name-only HEAD", dir)
     check "packages/web/package.json" in changedFiles
     check "packages/cli/cli.nimble" in changedFiles
@@ -198,6 +202,102 @@ suite "workspace strategies":
     check "version = \"0.1.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
     let (tags, _) = run("git tag", dir)
     check "web-v0.2.0" in tags
+
+  test "independent bump orders a shared changelog alphabetically":
+    let dir = freshSiblingWorkspaceRepo("siblings-shared-changelog", sourceFiles = true)
+    createDir(dir / "packages" / "both" / "alpha")
+    createDir(dir / "packages" / "both" / "beta")
+    discard commitFile(dir, "packages/both/alpha/a.nim", "echo 1\n", "feat: add alpha")
+    discard commitFile(dir, "packages/both/beta/b.nim", "echo 2\n", "fix: patch beta")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "Bumping alpha: 0.1.0 -> 0.2.0 (minor)" in output
+    check "Bumping beta: 0.1.0 -> 0.1.1 (patch)" in output
+
+    # Siblings are still versioned independently, sharing only the changelog.
+    check "version = \"0.2.0\"" in readFile(dir / "packages" / "both" / "alpha.nimble")
+    check "version = \"0.1.1\"" in readFile(dir / "packages" / "both" / "beta.nimble")
+
+    let changelogPath = dir / "packages" / "both" / "CHANGELOG.md"
+    require fileExists(changelogPath)
+    check not fileExists(dir / "CHANGELOG.md")
+    let changelog = readFile(changelogPath)
+
+    # Each section names its package, since the version alone would not say
+    # which of the two moved.
+    check "## [alpha 0.2.0]" in changelog
+    check "## [beta 0.1.1]" in changelog
+    check "add alpha" in changelog
+    check "patch beta" in changelog
+    # Alphabetical, even though the config declares `beta` first.
+    check changelog.find("## [alpha") < changelog.find("## [beta")
+    # One prepend for the file, so the header is not repeated per package.
+    check changelog.count("# Changelog") == 1
+    check changeNotes(dir).len == 0
+
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: alpha-v0.2.0, beta-v0.1.1"
+    let (tags, _) = run("git tag", dir)
+    check "alpha-v0.2.0" in tags
+    check "beta-v0.1.1" in tags
+
+  test "releasing one sibling keeps the other's entries in the shared changelog":
+    let dir = freshSiblingWorkspaceRepo("siblings-sequential", sourceFiles = true)
+    createDir(dir / "packages" / "both" / "alpha")
+    createDir(dir / "packages" / "both" / "beta")
+    discard commitFile(dir, "packages/both/alpha/a.nim", "echo 1\n", "feat: add alpha")
+    check run("nimver bump alpha", dir).code == 0
+
+    discard commitFile(dir, "packages/both/beta/b.nim", "echo 2\n", "fix: patch beta")
+    check run("nimver bump beta", dir).code == 0
+
+    # The second release prepends rather than replaces: both sections survive,
+    # newest on top.
+    let changelog = readFile(dir / "packages" / "both" / "CHANGELOG.md")
+    check "## [alpha 0.2.0]" in changelog
+    check "## [beta 0.1.1]" in changelog
+    check changelog.find("## [beta") < changelog.find("## [alpha")
+    check changelog.count("# Changelog") == 1
+
+  test "a change beside sibling manifests follows sharedChanges":
+    # Both manifests are equally near, so the file belongs to neither package
+    # on its own and the policy decides - here `all`, so both release it.
+    let dir = freshSiblingWorkspaceRepo("siblings-shared-note")
+    discard
+      commitFile(dir, "packages/both/notes.txt", "shared\n", "feat: shared change")
+
+    let notes = changeNotes(dir)
+    require notes.len == 1
+    let note = readFile(notes[0])
+    check "alpha" in note
+    check "beta" in note
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "Bumping alpha: 0.1.0 -> 0.2.0 (minor)" in output
+    check "Bumping beta: 0.1.0 -> 0.2.0 (minor)" in output
+    check changeNotes(dir).len == 0
+
+    let changelog = readFile(dir / "packages" / "both" / "CHANGELOG.md")
+    check "## [alpha 0.2.0]" in changelog
+    check "## [beta 0.2.0]" in changelog
+    check changelog.count("shared change") == 2
+
+  test "sharedChanges = none drops a change beside sibling manifests":
+    let dir = freshSiblingWorkspaceRepo("siblings-shared-none", sharedChanges = "none")
+    discard
+      commitFile(dir, "packages/both/notes.txt", "shared\n", "feat: shared change")
+    check changeNotes(dir).len == 0
+
+    # A sibling's own manifest still belongs to it, whatever the policy.
+    discard commitFile(
+      dir, "packages/both/alpha.nimble", "version = \"0.1.0\"\n# alpha\n",
+      "fix: annotate alpha",
+    )
+    let notes = changeNotes(dir)
+    require notes.len == 1
+    check "packages=alpha" in readFile(notes[0])
 
   test "independent bump treats a pre-workspace note as affecting every package":
     let dir = freshWorkspaceRepo("independent-legacy-note", strategy = "independent")

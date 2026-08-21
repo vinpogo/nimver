@@ -154,6 +154,54 @@ proc freshWorkspaceRepo*(
   commandResult = run("nimver install-hooks", result)
   doAssert commandResult.code == 0, "install-hooks failed: " & commandResult.output
 
+proc freshSiblingWorkspaceRepo*(
+    name: string, sharedChanges = "all", sourceFiles = false
+): string =
+  ## Two Nimble manifests in one directory - `packages/both/alpha.nimble` and
+  ## `packages/both/beta.nimble`, both at 0.1.0 - released independently. They
+  ## share `packages/both/CHANGELOG.md`, which is what makes this the fixture
+  ## for per-package changelog headings.
+  ##
+  ## `beta` is declared first on purpose: a release has to come out
+  ## alphabetical whatever order the config lists. With `sourceFiles` each
+  ## package claims its own subdirectory, the only way a file next to the two
+  ## manifests can be attributed to one of them.
+  result = TestRepoRoot / name
+  resetDir(result)
+  createDir(result / "packages" / "both")
+
+  initGitRepo(result)
+  writeFile(result / "packages" / "both" / "alpha.nimble", "version = \"0.1.0\"\n")
+  writeFile(result / "packages" / "both" / "beta.nimble", "version = \"0.1.0\"\n")
+  commitAll(result, "chore: init")
+
+  var commandResult = run("nimver init", result)
+  doAssert commandResult.code == 0, "init failed: " & commandResult.output
+
+  let configPath = result / ".nimver" / "config.ini"
+  proc packageSection(packageName: string): string =
+    "\n[package." & packageName & "]\nmanifest = packages/both/" & packageName &
+      ".nimble\n" & (
+      if sourceFiles:
+        "sourceFiles = \"packages/both/" & packageName & "/**\"\n"
+      else:
+        ""
+    )
+
+  writeFile(
+    configPath,
+    readFile(configPath) & "\n[workspace]\nstrategy = independent\n" & "sharedChanges = " &
+      sharedChanges & "\n" & packageSection("beta") & packageSection("alpha"),
+  )
+
+  discard run("git add -A", result)
+  commandResult =
+    run("git commit -q --no-verify -m \"chore: configure workspace\"", result)
+  doAssert commandResult.code == 0, "config commit failed: " & commandResult.output
+
+  commandResult = run("nimver install-hooks", result)
+  doAssert commandResult.code == 0, "install-hooks failed: " & commandResult.output
+
 proc commitFile*(
     dir, fileName, contents, message: string
 ): tuple[output: string, code: int] =

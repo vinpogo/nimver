@@ -41,9 +41,19 @@ proc bulletFor(entry: ChangeEntry): string =
       line
   "- " & subject
 
-proc buildSection*(version: SemVer, entries: seq[ChangeEntry]): string =
+proc buildSection*(
+    version: SemVer, entries: seq[ChangeEntry], packageName = ""
+): string =
+  ## `packageName` prefixes the version in the heading, for changelogs that
+  ## several packages share and where the version alone would not say which
+  ## package moved.
   let date = now().format("yyyy-MM-dd")
-  var parts: seq[string] = @["## [" & $version & "] - " & date]
+  let versionLabel =
+    if packageName.len > 0:
+      packageName & " " & $version
+    else:
+      $version
+  var parts: seq[string] = @["## [" & versionLabel & "] - " & date]
 
   let breaking = entries.filterIt(it.breaking)
   if breaking.len > 0:

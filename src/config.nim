@@ -23,13 +23,20 @@ const DefaultConfig* = """; nimver configuration
 ; next version. `nimver bump <package>` narrows that to one package. Use
 ; `fixed` to give every package the same version instead.
 ;
+; A changed file belongs to the package whose manifest is its nearest ancestor.
+; Packages sharing a directory are equally near, so a file beside them follows
+; `sharedChanges` unless `sourceFiles` claims it - and they share the
+; CHANGELOG.md in that directory, where each section names its package.
+;
+; Quote any value containing `*`: unquoted, the ini format ends the value there.
+;
 ; [workspace]
 ; strategy = independent
 ; sharedChanges = all
 ;
 ; [package.example]
 ; manifest = packages/example/package.json
-; sourceFiles = packages/example/**   ; optional; defaults to nearest manifest
+; sourceFiles = "packages/example/**"   ; optional; defaults to nearest manifest
 
 [types]
 feat = minor
@@ -170,6 +177,16 @@ proc loadConfig*(repoRoot: string): Config =
     of cfgKeyValuePair, cfgOption:
       let normalizedSection = currentSection.toLowerAscii()
       let normalizedKey = event.key.strip().toLowerAscii()
+      if '*' in normalizedKey:
+        # An ini value is only allowed to contain `*` inside quotes: unquoted,
+        # the value ends at the first `*` and the rest arrives as keys of its
+        # own. Left to run, that silently narrowed
+        # `sourceFiles = packages/web/**` to `packages/web/`, matching nothing.
+        raise newException(
+          IOError,
+          "Unquoted `*` in " & path &
+            ": a value containing `*` has to be quoted, as in sourceFiles = \"packages/web/**, docs/**\"",
+        )
       if normalizedSection == "types":
         result.types[event.key.strip().toLowerAscii()] = parseBumpLevel(event.value)
       elif normalizedSection == "workspace":

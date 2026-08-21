@@ -105,12 +105,12 @@ strategy = fixed
 A package name narrows the release to that package, which only `independent`
 allows. What each combination produces, for a `web` + `cli` workspace:
 
-| Strategy | Packages | Command | Versions | Changelog | Release commit | Tags |
-| --- | --- | --- | --- | --- | --- | --- |
-| either | 1 | `nimver bump` | the package's own | next to the manifest, or the root one under `fixed` | `version: v0.2.0` | `v0.2.0` |
-| `independent` | 2+ | `nimver bump` | each package moves to its own next version | one next to each manifest | `version: web-v0.2.0, cli-v0.1.1` | `web-v0.2.0` and `cli-v0.1.1`, both on that commit |
-| `independent` | 2+ | `nimver bump web` | only `web` moves | `packages/web/CHANGELOG.md` | `version(web): v0.2.0` | `web-v0.2.0` |
-| `fixed` | 2+ | `nimver bump` | all packages move to the same next version | root `CHANGELOG.md` | `version: v0.2.0` | `v0.2.0` |
+| Strategy | Packages | Command | Versions | Release commit | Tags |
+| --- | --- | --- | --- | --- | --- |
+| either | 1 | `nimver bump` | the package's own | `version: v0.2.0` | `v0.2.0` |
+| `independent` | 2+ | `nimver bump` | each package moves to its own next version | `version: cli-v0.1.1, web-v0.2.0` | `web-v0.2.0` and `cli-v0.1.1`, both on that commit |
+| `independent` | 2+ | `nimver bump web` | only `web` moves | `version(web): v0.2.0` | `web-v0.2.0` |
+| `fixed` | 2+ | `nimver bump` | all packages move to the same next version | `version: v0.2.0` | `v0.2.0` |
 
 ### Change attribution
 
@@ -126,10 +126,14 @@ Where `sourceFiles` is set, it wins over the nearest-ancestor rule; the patterns
 of two packages must not overlap. A package's own manifest always belongs to it.
 
 A manifest at the repository root acts as a catch-all for everything not inside
-a more specific package. Two packages may share a directory only under
-`strategy = fixed`, where they move together anyway. Under `independent` that is
-rejected: the packages would be released separately, yet a change in the shared
-directory could belong to either one, and `sourceFiles` cannot be inferred.
+a more specific package.
+
+Two packages may share a directory. Their manifests are then equally near to
+every file beside them, so such a file belongs to neither package on its own and
+follows `sharedChanges` (below) — set `sourceFiles` to attribute it to one of
+them. Each package's own manifest still belongs to it either way. Sharing a
+directory also means sharing the `CHANGELOG.md` in it; see
+[Strategies](#strategies).
 
 nimver does not filter files within a package (docs, fixtures, examples). Use
 commit types for that: a `docs:` or `chore:` commit is mapped to `none` by
