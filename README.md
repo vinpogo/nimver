@@ -125,30 +125,16 @@ packages/cli/src/main.nim    -> cli
 Where `sourceFiles` is set, it wins over the nearest-ancestor rule; the patterns
 of two packages must not overlap. A package's own manifest always belongs to it.
 
-A manifest at the repository root acts as a catch-all for everything not inside
-a more specific package.
-
-Two packages may share a directory. Their manifests are then equally near to
-every file beside them, so such a file belongs to neither package on its own and
+Two manifests may share a directory, any file within that directory belongs to neither package on its own and
 follows `sharedChanges` (below) — set `sourceFiles` to attribute it to one of
-them. Each package's own manifest still belongs to it either way. Sharing a
+them. Sharing a
 directory also means sharing the `CHANGELOG.md` in it; see
 [Strategies](#strategies).
-
-nimver does not filter files within a package (docs, fixtures, examples). Use
-commit types for that: a `docs:` or `chore:` commit is mapped to `none` by
-default, so it appears in the changelog without bumping the version.
 
 Changed files that match no package are controlled by `sharedChanges`:
 
 - `all` affects every package.
 - `none` does not create a pending change for any package.
-- `package.<name>` affects only the named package.
-
-Change files remain one-per-commit and include a `packages` header listing the
-affected packages. Repositories without any `[package.<name>]` sections remain
-backward compatible: their root manifest is detected automatically and treated
-as a single package named `root`.
 
 ## Configuration
 

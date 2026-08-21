@@ -61,11 +61,6 @@ type
   SharedChangesKind* = enum
     scAll
     scNone
-    scPackage
-
-  SharedChangesPolicy* = object
-    kind*: SharedChangesKind
-    packageName*: string
 
   PackageConfig* = object
     name*: string
@@ -80,35 +75,22 @@ type
     strategyWasSpecified*: bool
       ## Distinguishes a configured strategy from the default, so sibling
       ## manifests can imply `fixed` without overriding an explicit choice.
-    sharedChanges*: SharedChangesPolicy
+    sharedChanges*: SharedChangesKind
     packages*: seq[PackageConfig]
 
 proc configPath*(repoRoot: string): string =
   repoRoot / ".nimver" / "config.ini"
 
-proc parseSharedChanges(value: string): SharedChangesPolicy =
-  ## `package.<name>` targets a single package. `package:<name>` is accepted
-  ## too, but only when quoted in the ini file: `parsecfg` treats an unquoted
-  ## colon as the key/value delimiter and would strip everything after it.
-  let normalizedValue = value.strip()
-  case normalizedValue.toLowerAscii()
+proc parseSharedChanges(value: string): SharedChangesKind =
+  case value.strip().toLowerAscii()
   of "all":
-    SharedChangesPolicy(kind: scAll)
+    scAll
   of "none":
-    SharedChangesPolicy(kind: scNone)
+    scNone
   else:
-    let lowercasedValue = normalizedValue.toLowerAscii()
-    if lowercasedValue.startsWith("package.") or lowercasedValue.startsWith("package:"):
-      let packageName = normalizedValue["package.".len .. ^1].strip()
-      if packageName.len == 0:
-        raise newException(ValueError, "sharedChanges package name cannot be empty")
-      SharedChangesPolicy(kind: scPackage, packageName: packageName)
-    else:
-      raise newException(
-        ValueError,
-        "Invalid sharedChanges value: " & value &
-          ". Expected all, none, or package.<name>",
-      )
+    raise newException(
+      ValueError, "Invalid sharedChanges value: " & value & ". Expected all or none"
+    )
 
 proc validateWorkspaceConfig(config: Config, path: string) =
   var packageNames = initTable[string, bool]()
@@ -129,16 +111,6 @@ proc validateWorkspaceConfig(config: Config, path: string) =
     packageNames[package.name] = true
     manifestPaths[package.manifestPath] = true
 
-  let referencesImplicitRoot =
-    config.packages.len == 0 and config.sharedChanges.packageName == "root"
-  if config.sharedChanges.kind == scPackage and not referencesImplicitRoot and
-      not packageNames.hasKey(config.sharedChanges.packageName):
-    raise newException(
-      IOError,
-      "sharedChanges references unknown package '" & config.sharedChanges.packageName &
-        "' in " & path,
-    )
-
 proc loadConfig*(repoRoot: string): Config =
   let path = configPath(repoRoot)
   if not fileExists(path):
@@ -158,7 +130,7 @@ proc loadConfig*(repoRoot: string): Config =
   result = Config(
     types: initTable[string, BumpLevel](),
     workspaceStrategy: wsIndependent,
-    sharedChanges: SharedChangesPolicy(kind: scAll),
+    sharedChanges: scAll,
   )
   var currentSection = ""
   var currentPackageIndex = -1

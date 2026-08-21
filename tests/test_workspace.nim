@@ -32,15 +32,6 @@ suite "workspace attribution":
     check code == 0
     check changeNotes(dir).len == 0
 
-  test "workspace can assign shared changes to one package":
-    let dir = freshWorkspaceRepo("workspace-shared-package", "package.cli")
-    let (_, code) = commitFile(dir, "README.md", "# Workspace\n", "fix: document")
-    check code == 0
-
-    let notes = changeNotes(dir)
-    require notes.len == 1
-    check "packages=cli" in readFile(notes[0])
-
   test "sourceFiles override nearest-manifest attribution":
     # `docs/` sits outside both packages, so nearest-ancestor alone would hand
     # it to sharedChanges; an explicit pattern claims it for `web` instead.
