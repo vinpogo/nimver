@@ -51,6 +51,7 @@ test = none
 build = none
 ci = none
 version = ignore
+wip = ignore
 """
 
 type
