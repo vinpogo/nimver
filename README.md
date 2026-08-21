@@ -1,14 +1,8 @@
 # nimver
 
-Semantic versioning for Nim and package.json projects, driven by [Conventional
-Commits](https://www.conventionalcommits.org) and wired into Git via hooks.
+Forget about manual versioning — `nimver` handles it for you.
 
-Every commit is validated against the Conventional Commits format. When it
-passes, a small note recording the resulting version bump (`major` / `minor`
-/ `patch` / `none`) is folded into that same commit. Later, `bump` consolidates
-all pending notes since the last release, bumps the project manifest's version
-by the *highest* bump level found (bumps don't stack), and writes a grouped
-entry to `CHANGELOG.md`.
+It uses your Git commit history to determine the next version, and even writes your changelog for you. All you need to do is write nice [Conventional Commits](https://www.conventionalcommits.org).
 
 ## Install
 
@@ -26,22 +20,12 @@ nimver install-hooks
 ```
 
 `init` creates `.nimver/config.ini` (pre-populated with sensible
-defaults, see below) and a `.nimver/changes/` directory.
-`install-hooks` writes `commit-msg`, `post-commit` and `post-rewrite` hooks into
-`.git/hooks/` that delegate to this binary. Both `.nimver/`
-and its contents should be committed to Git — the pending change notes
-need to survive across separate commits until you run `bump`.
-
-## Supported project manifests
-
-`nimver bump` currently supports:
-
-- `.nimble`
-- `package.json`.
+defaults) and a `.nimver/changes/` directory.
+`install-hooks` writes `commit-msg`, `post-commit` and `post-rewrite` hooks into `.git/hooks/` that delegate to this binary. `.nimver/` should be committed to Git.
 
 ## Everyday use
 
-Just commit normally, using Conventional Commits syntax:
+Just commit normally, using [Conventional Commits syntax](https://www.conventionalcommits.org/):
 
 ```
 type(scope)!: subject
@@ -55,20 +39,23 @@ BREAKING CHANGE: describe the break
 When you're ready to cut a release:
 
 ```sh
-nimver bump                       # updates the manifest + CHANGELOG.md, commits, and tags
-nimver bump --dry-run             # preview without writing anything
-nimver bump --no-commit           # update files, but skip the commit (and the tag)
-nimver bump --no-tag              # commit the release, but skip the git tag
-nimver bump --no-commit --no-tag  # only touch the manifest/CHANGELOG.md, no git activity
+nimver bump # updates the manifest + CHANGELOG.md, commits, and tags
 ```
 
-## Workspaces
+## Supported project manifests
 
-Repositories with multiple packages must list them explicitly in
-`.nimver/config.ini`:
+`nimver bump` currently supports:
+
+- `.nimble`
+- `package.json`
+
+## Monorepos
+
+Repositories with multiple packages must list them explicitly in `.nimver/config.ini`:
 
 ```ini
 [workspace]
+strategy = independent
 sharedChanges = all
 
 [package.web]
@@ -76,76 +63,71 @@ manifest = packages/web/package.json
 
 [package.cli]
 manifest = packages/cli/cli.nimble
+sourceFiles = "src/cli/src/**"
 ```
 
-`sourceFiles` is optional per package and narrows what that package claims:
+`sourceFiles` is optional per package, see [Change attribution](#change-attribution).
 
-```ini
-[package.web]
-manifest = packages/web/package.json
-sourceFiles = "packages/web/**, docs/**"
-```
+### Strategy
 
-The quotes are required: an unquoted ini value ends at the first `*`, so
-`sourceFiles = packages/web/**` would mean `packages/web/`. nimver rejects that
-rather than letting a truncated pattern match nothing.
+The strategy controls how versioning is handled for the packages. There are two strategies: `independent` and `fixed`.
 
-### Strategies
+- `independent` — each package keeps its own version (default)
+- `fixed` — all packages share the same version
 
-`strategy = independent` is the default: each package keeps its own version, and
-`nimver bump` releases every package that has pending changes, each to its own
-next version, in one commit. `strategy = fixed` instead gives every package one
-shared version:
+When using `independent` strategy, you can bump the version of a single package without affecting others using `nimver bump <package>`.
 
-```ini
-[workspace]
-strategy = fixed
-```
+If you don't declare any packages, `nimver` picks up the manifests directly in the repository root. Finding more than one there, it assumes `fixed`, since nothing says how they relate.
 
-A package name narrows the release to that package, which only `independent`
-allows. What each combination produces, for a `web` + `cli` workspace:
+### Shared changes
 
-| Strategy | Packages | Command | Versions | Release commit | Tags |
-| --- | --- | --- | --- | --- | --- |
-| either | 1 | `nimver bump` | the package's own | `version: v0.2.0` | `v0.2.0` |
-| `independent` | 2+ | `nimver bump` | each package moves to its own next version | `version: cli-v0.1.1, web-v0.2.0` | `web-v0.2.0` and `cli-v0.1.1`, both on that commit |
-| `independent` | 2+ | `nimver bump web` | only `web` moves | `version(web): v0.2.0` | `web-v0.2.0` |
-| `fixed` | 2+ | `nimver bump` | all packages move to the same next version | `version: v0.2.0` | `v0.2.0` |
+Shared changes are files that belong to no package on their own. There are two options for handling them: `all` and `none`.
+
+- `all` — all packages are affected (default)
+- `none` — no packages are affected
+
+### Changelogs
+
+A changelog lives next to its manifest, so where you put manifests decides how many changelogs you get:
+
+- **Each manifest in its own directory** — one `CHANGELOG.md` per package,
+  written beside the manifest, with plain `## [1.2.0]` headings.
+- **Several manifests in the same directory** (including the repository root) —
+  those packages share the one `CHANGELOG.md` in that directory, and each
+  section names its package: `## [web 1.2.0]`.
 
 ### Change attribution
 
-A changed file is attributed to the package whose manifest is its *nearest
-ancestor*, so no per-package file patterns are needed:
+A committed file is attributed to the package whose manifest is its _nearest
+ancestor_, so no per-package file patterns are needed:
 
 ```text
 packages/web/src/button.ts   -> web
 packages/cli/src/main.nim    -> cli
 ```
 
-Where `sourceFiles` is set, it wins over the nearest-ancestor rule; the patterns
-of two packages must not overlap. A package's own manifest always belongs to it.
+When `sourceFiles` is set, it wins over the nearest-ancestor rule. The patterns of two packages must not overlap. Glob patterns must be quoted.
 
-Two manifests may share a directory, any file within that directory belongs to neither package on its own and
-follows `sharedChanges` (below) — set `sourceFiles` to attribute it to one of
-them. Sharing a
-directory also means sharing the `CHANGELOG.md` in it; see
-[Strategies](#strategies).
+If two manifests share a directory, any file within that directory belongs to neither package and follows [Shared changes](#shared-changes) — set `sourceFiles` to attribute it to one of them.
 
-Changed files that match no package are controlled by `sharedChanges`:
+## Commit types
 
-- `all` affects every package.
-- `none` does not create a pending change for any package.
+You can manually configure the commit types and bump levels in `.nimver/config.ini`. These levels are available:
 
-## Configuration
+```ini
+[types]
+foo = major # bumps a major version e.g. 1.1.0 -> 2.0.0
+bar = minor # bumps a minor version e.g. 0.1.1 -> 0.2.0
+baz = patch # bumps a patch version e.g. 0.1.0 -> 0.1.1
+qux = none # shows in changelog but doesn't bump version
+quux = ignore # won't show up in changelog
+```
 
-`.nimver/config.ini` maps each Conventional Commit type to a
-bump level. `none` means the type is valid and still shows up in the
-changelog, but doesn't bump the version by itself. `ignore` means the type
-is valid but is skipped entirely — no change file is recorded and it never
-appears in the changelog. This is used for the `version` type, which is the
-commit type `bump` uses for its own release commits (unless `--no-commit`
-is passed), so running `bump` doesn't cause the release commit itself to
-show up as a pending change the next time you run `bump`.
+A breaking change will always be treated as a major bump.
+
+Any commit type not listed here is rejected by the `commit-msg` hook. Add your own types (and adjust bump levels) as needed.
+
+The default types are:
 
 ```ini
 [types]
@@ -163,33 +145,6 @@ ci = none
 version = ignore
 ```
 
-Any commit type not listed here is rejected by the `commit-msg` hook. Add
-your own types (and adjust bump levels) as needed.
-
-## Testing
-
-```sh
-nimble test
-```
-
-This builds the binary, then runs each `tests/test_*.nim` suite:
-
-| Suite | Covers |
-| --- | --- |
-| `test_hooks.nim` | commit validation, note recording, amends, rebases |
-| `test_manifests.nim` | manifest detection and version-only edits |
-| `test_bump.nim` | releasing a single detected manifest |
-| `test_workspace.nim` | attributing changed files to packages |
-| `test_strategies.nim` | `fixed` and `independent` releases |
-
-`tests/support.nim` holds the shared fixtures. Every test drives real `git` +
-`nimver` invocations against a throwaway repo created under the system temp
-directory (override with `NIMVER_TEST_DIR`), and each starts from a fresh repo.
-
-Watch the output rather than the exit status: `nimble test` always exits 0,
-because nimble swallows a failing task (v0.22.2). The task prints a
-`Failing suites:` summary at the end when something fails.
-
 ## CLI reference
 
 ```
@@ -203,20 +158,3 @@ Invoked by installed hooks (not usually run by hand):
   nimver record-commit
   nimver record-rewrite <rebase|amend>
 ```
-
-## Why three hooks?
-
-A commit's tree is already fixed by the time `commit-msg` runs, so a file
-written and staged there does not end up in the commit being created — it
-would only surface in whatever commit comes next. To keep each commit
-self-contained, `commit-msg` is used purely for validation (and can reject
-the commit), while `post-commit` writes the actual bump-note file for the
-commit that was just made and folds it in via a guarded `git commit --amend`.
-
-`post-commit` also fires for each commit a rebase replays, but amending there
-would move HEAD out from under the rebase sequencer and abort it, so it stands
-down while a rebase is running. `post-rewrite` runs once the rebase is over,
-with the list of commits it rewrote, and re-records their notes then. The
-corrections are folded into HEAD rather than into each rewritten commit: moving
-a note back to its own commit would mean rewriting history a second time, and a
-release reads the set of pending notes, not which commit carries them.
