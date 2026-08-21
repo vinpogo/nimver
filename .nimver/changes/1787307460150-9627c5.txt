@@ -1,9 +1,0 @@
-type=feat
-bump=major
-breaking=true
-packages=root
-===
-feat(config)!: remove ability to attribute shared changes to a package via config
-
-If one needs attributing shared changes to a package, one can use the
-sourceFiles of a package instead
