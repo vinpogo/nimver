@@ -1,5 +1,7 @@
-## Releasing a configured workspace: `fixed` moves every package together,
-## `independent` (the default) releases one named package at a time.
+## Releasing a configured workspace: `fixed` moves every package to one shared
+## version, `independent` (the default) gives each package its own version.
+## Either way a bare `nimver bump` releases every package with pending changes;
+## under `independent` a package name narrows the release to that one.
 
 import std/[unittest, os, strutils]
 import ./support
@@ -112,17 +114,65 @@ suite "workspace strategies":
     )
     check "version = \"0.1.1\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
 
-  test "independent bump requires a package name":
-    let dir = freshWorkspaceRepo("independent-no-package", strategy = "independent")
+  test "independent bump without a package releases every package at its own version":
+    let dir = freshWorkspaceRepo("independent-all", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+    discard commitFile(dir, "packages/cli/main.nim", "echo 1\n", "fix: patch cli")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in output
+    check "Bumping cli: 0.1.0 -> 0.1.1 (patch)" in output
+
+    # Independent versions, so the two packages land on different numbers.
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+    check "version = \"0.1.1\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+    check fileExists(dir / "packages" / "web" / "CHANGELOG.md")
+    check fileExists(dir / "packages" / "cli" / "CHANGELOG.md")
+    check not fileExists(dir / "CHANGELOG.md")
+    check changeNotes(dir).len == 0
+
+    # One release commit, carrying one tag per released package.
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: web-v0.2.0, cli-v0.1.1"
+    let (changedFiles, _) = run("git show --pretty=format: --name-only HEAD", dir)
+    check "packages/web/package.json" in changedFiles
+    check "packages/cli/cli.nimble" in changedFiles
+    let (head, _) = run("git rev-parse HEAD", dir)
+    check run("git rev-list -1 web-v0.2.0", dir).output.strip() == head.strip()
+    check run("git rev-list -1 cli-v0.1.1", dir).output.strip() == head.strip()
+
+  test "independent bump without a package skips packages with nothing pending":
+    let dir = freshWorkspaceRepo("independent-all-partial", strategy = "independent")
     discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
 
     let (output, code) = run("nimver bump", dir)
-    check code != 0
-    check "needs a package to release" in output
-    check "web" in output
-    check "\"version\": \"0.1.0\"" in readFile(
-      dir / "packages" / "web" / "package.json"
-    )
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in output
+    check "version = \"0.1.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
+
+    # A lone released package keeps the package-scoped subject and single tag.
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version(web): v0.2.0"
+    let (tags, _) = run("git tag", dir)
+    check tags.strip() == "web-v0.2.0"
+
+  test "independent bump without a package consumes a shared note once":
+    let dir = freshWorkspaceRepo("independent-all-shared", strategy = "independent")
+    discard commitFile(dir, "README.md", "# Workspace\n", "feat: shared change")
+    require changeNotes(dir).len == 1
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in output
+    check "Bumping cli: 0.1.0 -> 0.2.0 (minor)" in output
+
+    # Both packages spend the note in the same run, so nothing stays pending.
+    check changeNotes(dir).len == 0
+    check "shared change" in readFile(dir / "packages" / "web" / "CHANGELOG.md")
+    check "shared change" in readFile(dir / "packages" / "cli" / "CHANGELOG.md")
 
   test "independent bump rejects an unknown package":
     let dir = freshWorkspaceRepo("independent-unknown", strategy = "independent")
@@ -137,13 +187,9 @@ suite "workspace strategies":
     let dir = freshWorkspaceRepo("default-strategy", strategy = "")
     discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
 
-    # A bare bump cannot pick between packages...
-    var (output, code) = run("nimver bump", dir)
-    check code != 0
-    check "needs a package to release" in output
-
-    # ...and releasing one leaves the other alone, rather than moving both.
-    (output, code) = run("nimver bump web", dir)
+    # Releasing one package by name leaves the other alone, rather than
+    # moving both to a shared version the way `fixed` would.
+    let (output, code) = run("nimver bump web", dir)
     check code == 0
     check "Bumping web: 0.1.0 -> 0.2.0" in output
     check "\"version\": \"0.2.0\"" in readFile(

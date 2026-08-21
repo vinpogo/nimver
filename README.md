@@ -88,47 +88,25 @@ sourceFiles = packages/web/**, docs/**
 
 ### Strategies
 
-`strategy = independent` is the default: each package keeps its own version, so
-`bump` takes the package to release:
-
-```sh
-nimver bump web
-nimver bump cli --dry-run
-```
-
-Each package gets its own version, its own `CHANGELOG.md` next to its manifest,
-a `version(<package>): vX.Y.Z` release commit, and a `<package>-vX.Y.Z` tag.
-Plain `nimver bump` reports which packages have pending changes instead of
-releasing several at once, so a release is always one commit and one tag.
-
-`strategy = fixed` instead gives every package one shared version. All
-configured manifests must start at the same version, and `nimver bump` moves all
-of them to the same next version; a mismatch is reported before any file is
-changed. The release commit is `version: vX.Y.Z`, tagged `vX.Y.Z`, and the
-changelog is the repository-root `CHANGELOG.md`.
+`strategy = independent` is the default: each package keeps its own version, and
+`nimver bump` releases every package that has pending changes, each to its own
+next version, in one commit. `strategy = fixed` instead gives every package one
+shared version:
 
 ```ini
 [workspace]
 strategy = fixed
 ```
 
-A workspace with a single package is unaffected by either strategy: `nimver bump`
-needs no package name, and releases keep the flat `version: vX.Y.Z` commit,
-`vX.Y.Z` tag, and root `CHANGELOG.md`. That holds whether the manifest was
-detected or declared, so naming one package to exclude an unrelated sibling
-manifest does not change how releases are tagged. Package-namespaced tags start
-only once a workspace holds more than one package.
+A package name narrows the release to that package, which only `independent`
+allows. What each combination produces, for a `web` + `cli` workspace:
 
-A commit that touches several packages records one note listing all of them, and
-releasing a package consumes only its own entry:
-
-```ini
-packages=web,cli    # after `nimver bump web`:
-packages=cli        # still pending for cli, same note file
-```
-
-The note is removed once its last package has been released, so filenames stay
-stable and no note is rewritten just because a commit hash changed.
+| Strategy | Packages | Command | Versions | Changelog | Release commit | Tags |
+| --- | --- | --- | --- | --- | --- | --- |
+| either | 1 | `nimver bump` | the package's own | next to the manifest, or the root one under `fixed` | `version: v0.2.0` | `v0.2.0` |
+| `independent` | 2+ | `nimver bump` | each package moves to its own next version | one next to each manifest | `version: web-v0.2.0, cli-v0.1.1` | `web-v0.2.0` and `cli-v0.1.1`, both on that commit |
+| `independent` | 2+ | `nimver bump web` | only `web` moves | `packages/web/CHANGELOG.md` | `version(web): v0.2.0` | `web-v0.2.0` |
+| `fixed` | 2+ | `nimver bump` | all packages move to the same next version | root `CHANGELOG.md` | `version: v0.2.0` | `v0.2.0` |
 
 ### Change attribution
 

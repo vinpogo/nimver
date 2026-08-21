@@ -1,7 +1,7 @@
 ## nimver: semantic versioning for Nim projects, driven by
 ## Conventional Commits and wired into Git via a `commit-msg` hook.
 
-import std/[os, strutils, sequtils, algorithm, tables]
+import std/[os, strutils, sequtils, algorithm, sets, tables]
 import ./gitutils
 import ./config
 import ./commitparser
@@ -24,7 +24,8 @@ Usage:
   nimver version
 
 `bump` takes a package name only in an `independent` workspace, where it
-releases that one package. A `fixed` workspace always releases every package.
+narrows the release to that one package. Without one, every package with
+pending changes is released. A `fixed` workspace always releases every package.
 
 Invoked by installed hooks (not usually run by hand):
   nimver check-commit-msg <path-to-message-file>
@@ -275,75 +276,149 @@ proc bumpFixedWorkspace(
       gitTag(repoRoot, "v" & $next)
       echo "Created tag v" & $next
 
-proc bumpPackage(
+type PackageRelease = object
+  ## One package's planned release: what it moves to, and the notes that say
+  ## so. Planning every package before writing anything keeps a release of
+  ## several packages a single commit.
+  package: WorkspacePackage
+  entries: seq[ChangeEntry]
+  current, next: SemVer
+  level: BumpLevel
+  section: string
+  changelogPath: string
+  tag: string
+
+proc hasPendingChanges(release: PackageRelease): bool =
+  release.entries.len > 0
+
+proc isReleasable(release: PackageRelease): bool =
+  ## Pending notes that all say `bump=none` belong in the changelog of some
+  ## later release, not in a release of their own.
+  release.hasPendingChanges() and release.level != blNone
+
+proc planRelease(
     repoRoot: string,
     projectWorkspace: Workspace,
     package: WorkspacePackage,
     allEntries: seq[ChangeEntry],
+): PackageRelease =
+  result.package = package
+  result.entries =
+    allEntries.filterIt(package.name in projectWorkspace.effectivePackages(it))
+  result.level = highestBumpLevel(result.entries)
+  if not result.isReleasable():
+    return
+
+  result.current = readVersion(package.manifest)
+  result.next = bump(result.current, result.level)
+  result.section = buildSection(result.next, result.entries)
+  result.changelogPath = changelogPathFor(repoRoot, package)
+  result.tag = releaseTagFor(projectWorkspace, package, result.next)
+
+proc consumeChangeNotes(projectWorkspace: Workspace, releases: seq[PackageRelease]) =
+  ## A note shared by several packages is only spent for the ones being
+  ## released. It has to be rewritten once against the whole release set:
+  ## rewriting it per package would restore the packages an earlier rewrite in
+  ## the same run had already removed, since each release still holds the note
+  ## as it was read from disk.
+  var releasedNames = initHashSet[string]()
+  for release in releases:
+    releasedNames.incl(release.package.name)
+
+  var rewrittenPaths = initHashSet[string]()
+  for release in releases:
+    for entry in release.entries:
+      if rewrittenPaths.containsOrIncl(entry.path):
+        continue
+      entry.rewriteAffectedPackages(
+        projectWorkspace.effectivePackages(entry).filterIt(it notin releasedNames)
+      )
+
+proc releaseCommitSubject(
+    projectWorkspace: Workspace, releases: seq[PackageRelease]
+): string =
+  ## Releasing several independently versioned packages has no single version
+  ## to name, so the subject lists the tags the commit is about to carry.
+  if releases.len == 1:
+    releaseCommitSubjectFor(projectWorkspace, releases[0].package, releases[0].next)
+  else:
+    "version: " & releases.mapIt(it.tag).join(", ")
+
+proc bumpIndependentPackages(
+    repoRoot: string,
+    projectWorkspace: Workspace,
+    candidates: seq[WorkspacePackage],
+    allEntries: seq[ChangeEntry],
     doCommit, doTag, dryRun: bool,
 ) =
-  let entries =
-    allEntries.filterIt(package.name in projectWorkspace.effectivePackages(it))
-  if entries.len == 0:
-    echo "No pending changes for package '", package.name, "'. Nothing to bump."
+  ## Releases each of `candidates` that has pending changes, every package to
+  ## its own next version, as one commit carrying one tag per package.
+  var releases: seq[PackageRelease] = @[]
+  var anyPending = false
+  for package in candidates:
+    let release = planRelease(repoRoot, projectWorkspace, package, allEntries)
+    if release.hasPendingChanges():
+      anyPending = true
+    if release.isReleasable():
+      releases.add(release)
+
+  if releases.len == 0:
+    if anyPending:
+      echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
+    elif candidates.len == 1:
+      echo "No pending changes for package '", candidates[0].name, "'. Nothing to bump."
+    else:
+      echo "No pending changes for any configured package. Nothing to bump."
     return
 
-  let overall = highestBumpLevel(entries)
-  if overall == blNone:
-    echo "All pending changes are non-version-impacting (bump=none). Nothing to bump."
-    return
+  for release in releases:
+    echo "Bumping ",
+      releaseLabelFor(projectWorkspace, release.package),
+      ": ",
+      $release.current,
+      " -> ",
+      $release.next,
+      " (",
+      $release.level,
+      ")"
 
-  let current = readVersion(package.manifest)
-  let next = bump(current, overall)
-  let section = buildSection(next, entries)
-  let changelogPath = changelogPathFor(repoRoot, package)
-  let tag = releaseTagFor(projectWorkspace, package, next)
-
-  echo "Bumping ",
-    releaseLabelFor(projectWorkspace, package),
-    ": ",
-    $current,
-    " -> ",
-    $next,
-    " (",
-    $overall,
-    ")"
   if dryRun:
-    echo "\n--- CHANGELOG entry (dry run, nothing written) ---"
-    echo section
+    for release in releases:
+      let releaseLabel =
+        if releases.len > 1:
+          " for " & release.package.name
+        else:
+          ""
+      echo "\n--- CHANGELOG entry", releaseLabel, " (dry run, nothing written) ---"
+      echo release.section
     return
 
-  writeVersion(package.manifest, next)
-  prependToChangelog(changelogPath, section)
-  for entry in entries:
-    let remainingPackages =
-      projectWorkspace.effectivePackages(entry).filterIt(it != package.name)
-    entry.rewriteAffectedPackages(remainingPackages)
-  echo "Updated ", package.manifest.filePath, " (", package.manifest.displayName(), ")"
-  echo "Updated ", changelogPath
+  for release in releases:
+    writeVersion(release.package.manifest, release.next)
+    prependToChangelog(release.changelogPath, release.section)
+    echo "Updated ",
+      release.package.manifest.filePath,
+      " (",
+      release.package.manifest.displayName(),
+      ")"
+    echo "Updated ", release.changelogPath
+  consumeChangeNotes(projectWorkspace, releases)
 
   if doCommit:
-    gitAdd(repoRoot, package.manifest.filePath)
-    gitAdd(repoRoot, changelogPath)
+    for release in releases:
+      gitAdd(repoRoot, release.package.manifest.filePath)
+      gitAdd(repoRoot, release.changelogPath)
     gitAdd(repoRoot, changesDir(repoRoot))
-    gitCommit(repoRoot, releaseCommitSubjectFor(projectWorkspace, package, next))
+    gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
     echo "Created release commit."
 
   if doTag:
     if not doCommit:
       reportSkippedTag()
     else:
-      gitTag(repoRoot, tag)
-      echo "Created tag " & tag
-
-proc packagesWithPendingChanges(
-    projectWorkspace: Workspace, entries: seq[ChangeEntry]
-): seq[string] =
-  for package in projectWorkspace.packages:
-    for entry in entries:
-      if package.name in projectWorkspace.effectivePackages(entry):
-        result.add(package.name)
-        break
+      for release in releases:
+        gitTag(repoRoot, release.tag)
+        echo "Created tag " & release.tag
 
 proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bool) =
   ## `doCommit`/`doTag` are true by default at the call site; `--no-commit`
@@ -364,20 +439,16 @@ proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bo
       )
     bumpFixedWorkspace(repoRoot, projectWorkspace, entries, doCommit, doTag, dryRun)
   of wsIndependent:
-    # With a single package there is nothing to disambiguate, so a bare `bump`
-    # releases it. Naming a package is only required once several exist.
-    let package =
+    # A bare `bump` releases everything that has pending changes; naming a
+    # package narrows the release to that one.
+    let candidates =
       if requestedPackageName.len > 0:
-        projectWorkspace.findPackage(requestedPackageName)
-      elif projectWorkspace.packages.len == 1:
-        projectWorkspace.packages[0]
+        @[projectWorkspace.findPackage(requestedPackageName)]
       else:
-        raise newException(
-          IOError,
-          "workspace strategy is 'independent', so `nimver bump` needs a package to release. Packages with pending changes: " &
-            packagesWithPendingChanges(projectWorkspace, entries).join(", "),
-        )
-    bumpPackage(repoRoot, projectWorkspace, package, entries, doCommit, doTag, dryRun)
+        projectWorkspace.packages
+    bumpIndependentPackages(
+      repoRoot, projectWorkspace, candidates, entries, doCommit, doTag, dryRun
+    )
 
 when isMainModule:
   let args = commandLineParams()

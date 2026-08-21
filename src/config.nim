@@ -18,9 +18,10 @@ const DefaultConfig* = """; nimver configuration
 ; `BREAKING CHANGE:` footer) always bumps `major`.
 ;
 ; Repositories with multiple manifests can declare a workspace. The default
-; strategy is `independent`: each package keeps its own version and is released
-; with `nimver bump <package>`. Use `fixed` to give every package the same
-; version, released together by `nimver bump`.
+; strategy is `independent`: each package keeps its own version, and
+; `nimver bump` releases every package with pending changes, each to its own
+; next version. `nimver bump <package>` narrows that to one package. Use
+; `fixed` to give every package the same version instead.
 ;
 ; [workspace]
 ; strategy = independent
