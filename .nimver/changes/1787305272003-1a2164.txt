@@ -1,6 +1,0 @@
-type=docs
-bump=none
-breaking=false
-packages=root
-===
-docs: add note abou quoting config values
