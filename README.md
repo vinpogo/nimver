@@ -83,8 +83,12 @@ manifest = packages/cli/cli.nimble
 ```ini
 [package.web]
 manifest = packages/web/package.json
-sourceFiles = packages/web/**, docs/**
+sourceFiles = "packages/web/**, docs/**"
 ```
+
+The quotes are required: an unquoted ini value ends at the first `*`, so
+`sourceFiles = packages/web/**` would mean `packages/web/`. nimver rejects that
+rather than letting a truncated pattern match nothing.
 
 ### Strategies
 
