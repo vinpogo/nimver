@@ -50,7 +50,7 @@ suite "workspace attribution":
       configPath,
       readFile(configPath).replace(
         "[package.web]\nmanifest = packages/web/package.json\n",
-        "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = packages/web/**, docs/**\n",
+        "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = \"packages/web/**, docs/**\"\n",
       ),
     )
     discard run("git add -A", dir)
@@ -63,7 +63,27 @@ suite "workspace attribution":
     # The config commit above records a note of its own, so pick out this one.
     let notes = changeNotes(dir).filterIt("feat: document web" in readFile(it))
     require notes.len == 1
-    check "packages=web" in readFile(notes[0])
+    # Anchored on the line end: a bare `packages=web` check also passes for
+    # `packages=web,cli`, which is what a pattern matching nothing produces.
+    check "packages=web\n" in readFile(notes[0])
+
+  test "an unquoted glob in sourceFiles is rejected":
+    # The ini format ends an unquoted value at the first `*`, so the pattern
+    # would silently narrow to `packages/web/` and claim nothing.
+    let dir = freshWorkspaceRepo("workspace-unquoted-glob")
+    let configPath = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath,
+      readFile(configPath).replace(
+        "[package.web]\nmanifest = packages/web/package.json\n",
+        "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = packages/web/**\n",
+      ),
+    )
+
+    let (output, code) = run("nimver bump --dry-run", dir)
+    check code != 0
+    check "Unquoted `*`" in output
+    check "has to be quoted" in output
 
   test "nested packages attribute changes to the nearest manifest":
     let dir =

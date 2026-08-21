@@ -1,0 +1,6 @@
+type=fix
+bump=patch
+breaking=false
+packages=root
+===
+fix: independently bumped packages with sibling manifests share the same changelog
