@@ -1,7 +1,5 @@
-## Parses and validates a Conventional Commits (https://www.conventionalcommits.org)
-## header of the form `type(scope)!: subject`, without relying on regex/PCRE.
-
 import std/strutils
+import ./result
 
 type ParsedCommit* = object
   commitType*: string
@@ -35,25 +33,22 @@ proc isValidTypeToken(s: string): bool =
       return false
   true
 
-proc parseCommitMessage*(raw: string): (bool, string, ParsedCommit) =
-  ## Returns `(ok, errorMessage, parsedCommit)`.
+proc parseCommitMessage*(raw: string): Result[ParsedCommit] =
   let cleaned = stripCommentsAndTrailingBlank(raw)
   if cleaned.strip().len == 0:
-    return (false, "Commit message is empty.", ParsedCommit())
+    return Failure[ParsedCommit]("Commit message is empty.")
 
   let headerLine = cleaned.splitLines()[0]
   let sepIdx = headerLine.find(": ")
   if sepIdx == -1:
-    return (
-      false,
-      "Header must match 'type(scope)!: subject' (missing a ': ' separator).",
-      ParsedCommit(),
+    return Failure[ParsedCommit](
+      "Header must match 'type(scope)!: subject' (missing a ': ' separator)."
     )
 
   var prefix = headerLine[0 ..< sepIdx]
   let subject = headerLine[sepIdx + 2 .. ^1].strip()
   if subject.len == 0:
-    return (false, "Commit subject must not be empty.", ParsedCommit())
+    return Failure[ParsedCommit]("Commit subject must not be empty.")
 
   var breaking = false
   if prefix.endsWith("!"):
@@ -65,15 +60,13 @@ proc parseCommitMessage*(raw: string): (bool, string, ParsedCommit) =
   let parenStart = prefix.find('(')
   if parenStart != -1:
     if not prefix.endsWith(")"):
-      return (false, "Unbalanced parentheses in commit scope.", ParsedCommit())
+      return Failure[ParsedCommit]("Unbalanced parentheses in commit scope.")
     commitType = prefix[0 ..< parenStart]
     scope = prefix[parenStart + 1 ..< prefix.high]
 
   if not isValidTypeToken(commitType):
-    return (
-      false,
-      "Commit type must be alphabetic (e.g. 'feat', 'fix'), got: '" & commitType & "'.",
-      ParsedCommit(),
+    return Failure[ParsedCommit](
+      "Commit type must be alphabetic (e.g. 'feat', 'fix'), got: '" & commitType & "'."
     )
 
   if hasBreakingFooter(cleaned):
@@ -86,4 +79,4 @@ proc parseCommitMessage*(raw: string): (bool, string, ParsedCommit) =
     subject: subject,
     rawMessage: cleaned,
   )
-  (true, "", parsed)
+  Success(parsed)
