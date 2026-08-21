@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.0.0] - 2026-08-21
+
+### Breaking Changes
+- remove ability to attribute shared changes to a package via config
+
+### Documentation
+- de-slop README
+
 ## [2.2.0] - 2026-08-21
 
 ### Documentation
