@@ -1,18 +1,5 @@
-## Installs the Git hooks that delegate to this binary.
-##
-## Two hooks are used because a commit's tree is snapshotted before
-## `commit-msg` runs, so a file written and staged there does *not* make it
-## into that commit (only `pre-commit` can still influence the tree at that
-## point). Instead:
-##   - `commit-msg` only validates the message and can reject the commit.
-##   - `post-commit` writes the bump-note file for the commit that was just
-##     created and folds it in via a guarded `commit --amend`.
-##   - `post-rewrite` re-records notes after a rebase, which `post-commit`
-##     cannot do: it fires while the rebase is still running, where amending
-##     would derail the sequencer.
-
 import std/os
-import ./gitutils
+import ../gitutils
 
 const CommitMsgHook = """#!/bin/sh
 # Installed by nimver. Do not edit by hand;
@@ -59,17 +46,16 @@ proc writeHook(hooksDir, name, content: string, force: bool) =
   writeFile(hookPath, content)
   setFilePermissions(hookPath, ExecutablePerms)
 
-proc installHooks*(repoRoot: string, force: bool): string =
-  ## Installs both hooks and returns the directory they were written to. That
-  ## directory is resolved through Git rather than assumed to be
-  ## `<root>/.git/hooks`, so this also works from a linked worktree or any
-  ## other checkout whose `.git` is a file (see `gitPath`). Note that Git
-  ## shares one hooks directory across all worktrees of a repository.
+proc cmdInstallHooks*(repoRoot: string, force: bool) =
   let hooksDir = gitPath(repoRoot, "hooks")
   if not dirExists(hooksDir):
     raise newException(IOError, "No hooks directory found at " & hooksDir)
 
   writeHook(hooksDir, "commit-msg", CommitMsgHook, force)
+  echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
+
   writeHook(hooksDir, "post-commit", PostCommitHook, force)
+  echo "Installed post-commit hook at ", hooksDir / "post-commit"
+
   writeHook(hooksDir, "post-rewrite", PostRewriteHook, force)
-  hooksDir
+  echo "Installed post-rewrite hook at ", hooksDir / "post-rewrite"

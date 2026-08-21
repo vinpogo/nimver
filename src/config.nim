@@ -1,42 +1,10 @@
-## Loads Conventional Commit, workspace, and package configuration from
-## `.nimver/config.ini`.
-
-import std/[os, streams, parsecfg, tables, strutils, sequtils]
+import std/[os, streams, parsecfg, tables, strutils, sequtils, algorithm]
 import ./semver
+import ./commitparser
+import ./result
 
 const DefaultConfig* = """; nimver configuration
-;
-; Maps a Conventional Commits type to a semantic version bump.
-; Allowed values: major, minor, patch, none, ignore
-;   - "none" still shows up in the changelog but does not bump the version.
-;   - "ignore" is skipped entirely: no change file is recorded and it never
-;     shows up in the changelog. Used for the "version" type, which is what
-;     `bump --commit` uses for its own release commits, so they don't get
-;     picked up as a pending change on the next `bump`.
-;   - a commit type not listed here is rejected by the commit-msg hook.
-; Regardless of this mapping, a commit marked as breaking (`feat!: ...` or a
-; `BREAKING CHANGE:` footer) always bumps `major`.
-;
-; Repositories with multiple manifests can declare a workspace. The default
-; strategy is `independent`: each package keeps its own version, and
-; `nimver bump` releases every package with pending changes, each to its own
-; next version. `nimver bump <package>` narrows that to one package. Use
-; `fixed` to give every package the same version instead.
-;
-; A changed file belongs to the package whose manifest is its nearest ancestor.
-; Packages sharing a directory are equally near, so a file beside them follows
-; `sharedChanges` unless `sourceFiles` claims it - and they share the
-; CHANGELOG.md in that directory, where each section names its package.
-;
-; Quote any value containing `*`: unquoted, the ini format ends the value there.
-;
-; [workspace]
-; strategy = independent
-; sharedChanges = all
-;
-; [package.example]
-; manifest = packages/example/package.json
-; sourceFiles = "packages/example/**"   ; optional; defaults to nearest manifest
+; see https://github.com/vinpogo/nimver for details
 
 [types]
 feat = minor
@@ -199,9 +167,18 @@ proc loadConfig*(repoRoot: string): Config =
 
   validateWorkspaceConfig(result, path)
 
-proc lookupType*(config: Config, commitType: string): (bool, BumpLevel) =
+proc lookupLevel(config: Config, commitType: string): Result[BumpLevel] =
   let key = commitType.toLowerAscii()
   if config.types.hasKey(key):
-    (true, config.types[key])
+    Success(config.types[key])
   else:
-    (false, blNone)
+    Failure[BumpLevel]("Unknown commit type: " & commitType)
+
+proc validateAndLookup*(config: Config, parsed: ParsedCommit): Result[BumpLevel] =
+  let maybeLevel = lookupLevel(config, parsed.commitType)
+  if isFailure(maybeLevel):
+    let allowed = toSeq(config.types.keys).sorted().join(", ")
+    return Failure[BumpLevel](
+      "unknown commit type '" & parsed.commitType & "'. Allowed types: " & allowed
+    )
+  Success(if parsed.breaking: blMajor else: maybeLevel.value)

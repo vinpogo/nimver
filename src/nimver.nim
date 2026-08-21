@@ -8,11 +8,13 @@ import ./commitparser
 import ./changes
 import ./adapters/manifest
 import ./changelog
-import ./hooks
 import ./semver
 import ./workspace
-
-const NimblePkgVersion {.strdefine.} = "unknown"
+import ./result
+import ./commands/init
+import ./commands/version
+import ./commands/installHooks
+import ./commands/checkCommitMsg
 
 const Usage = """
 nimver - semantic versioning from Conventional Commits
@@ -23,63 +25,9 @@ Usage:
   nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
   nimver version
 
-`bump` takes a package name only in an `independent` workspace, where it
-narrows the release to that one package. Without one, every package with
-pending changes is released. A `fixed` workspace always releases every package.
+See https://github.com/vinpogo/nimver for details.
 
-Invoked by installed hooks (not usually run by hand):
-  nimver check-commit-msg <path-to-message-file>
-  nimver record-commit
-  nimver record-rewrite <rebase|amend>
 """
-
-proc cmdVersion() =
-  echo NimblePkgVersion
-
-proc cmdInit(repoRoot: string) =
-  createDir(changesDir(repoRoot))
-  let cfgPath = configPath(repoRoot)
-  if fileExists(cfgPath):
-    echo "Config already exists at ", cfgPath
-  else:
-    writeFile(cfgPath, DefaultConfig)
-    echo "Created ", cfgPath
-  echo "Run `nimver install-hooks` to wire up the commit-msg hook."
-
-proc cmdInstallHooks(repoRoot: string, force: bool) =
-  let hooksDir = installHooks(repoRoot, force)
-  echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
-  echo "Installed post-commit hook at ", hooksDir / "post-commit"
-  echo "Installed post-rewrite hook at ", hooksDir / "post-rewrite"
-
-proc validateAndLookup(cfg: Config, parsed: ParsedCommit): (bool, string, BumpLevel) =
-  ## Returns `(ok, errorMessage, bumpLevel)`.
-  let (known, configuredLevel) = lookupType(cfg, parsed.commitType)
-  if not known:
-    let allowed = toSeq(cfg.types.keys).sorted().join(", ")
-    return (
-      false,
-      "unknown commit type '" & parsed.commitType & "'. Allowed types: " & allowed,
-      blNone,
-    )
-  let bumpLevel = if parsed.breaking: blMajor else: configuredLevel
-  (true, "", bumpLevel)
-
-proc cmdCheckCommitMsg(repoRoot: string, msgFilePath: string) =
-  ## Runs as the `commit-msg` hook. Only validates; the commit's tree is
-  ## already fixed by this point, so writing the bump-note file here would
-  ## not end up in the commit being created (see `record-commit`).
-  let raw = readFile(msgFilePath)
-  let (ok, err, parsed) = parseCommitMessage(raw)
-  if not ok:
-    stderr.writeLine("nimver: invalid commit message: " & err)
-    quit(1)
-
-  let cfg = loadConfig(repoRoot)
-  let (validType, typeErr, _) = validateAndLookup(cfg, parsed)
-  if not validType:
-    stderr.writeLine("nimver: " & typeErr)
-    quit(1)
 
 proc syncNoteForCommit(
     repoRoot: string, cfg: Config, projectWorkspace: Workspace, revision: string
@@ -100,16 +48,16 @@ proc syncNoteForCommit(
         removeFile(notePath)
         dirty = true
 
-  let (ok, err, parsed) = parseCommitMessage(gitCommitMessage(repoRoot, revision))
-  if not ok:
-    stderr.writeLine("nimver: skipping unparseable commit: " & err)
+  let parseResult = parseCommitMessage(gitCommitMessage(repoRoot, revision))
+  if isFailure(parseResult):
+    stderr.writeLine("nimver: skipping unparseable commit: " & parseResult.error)
     return dirty
 
-  let (validType, typeErr, bumpLevel) = validateAndLookup(cfg, parsed)
-  if not validType:
-    stderr.writeLine("nimver: skipping commit: " & typeErr)
+  let maybeLevel = validateAndLookup(cfg, parseResult.value)
+  if isFailure(maybeLevel):
+    stderr.writeLine("nimver: skipping commit: " & maybeLevel.error)
     return dirty
-  if bumpLevel == blIgnore:
+  if maybeLevel.value == blIgnore:
     return dirty
 
   let affectedPackages =
@@ -118,8 +66,8 @@ proc syncNoteForCommit(
     return dirty
 
   discard writeChangeFile(
-    repoRoot, parsed.commitType, bumpLevel, parsed.breaking, affectedPackages,
-    parsed.rawMessage,
+    repoRoot, parseResult.value.commitType, maybeLevel.value,
+    parseResult.value.breaking, affectedPackages, parseResult.value.rawMessage,
   )
   true
 
