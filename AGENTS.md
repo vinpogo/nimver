@@ -54,13 +54,17 @@ the history.
 
 ## Everyday conventions
 
-- Toolchain comes from mise: prefix commands with `mise exec --`.
+- Toolchain comes from mise: prefer mise tasks, otherwise prefix commands with `mise exec --`.
 - Format Nim with nph before committing: `mise exec -- nph <files>`.
-- Run the tests with `mise exec -- nimble test`, but do not trust its exit
-  status: nimble exits 0 even when a suite fails or never runs. Read the output
-  and check the `Failing suites:` summary the task prints.
-- Suites are `tests/test_*.nim`, shared fixtures live in `tests/support.nim`,
-  and throwaway repos are created under the system temp directory.
+- Run the tests with `mise run test`, not `nimble test` directly: the suites
+  shell out to `nimver`, so the task installs the binary first and would
+  otherwise exercise whatever was compiled last.
+- Do not trust the exit status: nimble exits 0 even when a suite fails
+  (v0.22.2), and it stops at the first failing suite rather than running the
+  rest. Read the output - `All tests passed` is the only line that means it.
+- Suites are `tests/test_*.nim` and shared fixtures live in
+  `tests/support.nim`; throwaway repos are created under the system temp
+  directory.
 - This repository versions itself with nimver, so its own hooks run on every
   commit. Keep commit messages Conventional; the `version` type is ignored so
   release commits do not record notes.
