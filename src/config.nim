@@ -47,8 +47,12 @@ type
     sharedChanges*: SharedChangesKind
     packages*: seq[PackageConfig]
 
-proc configPath*(repoRoot: string): string =
-  repoRoot / ".nimver" / "config.ini"
+const ConfigName* = "config.ini"
+const ConfigDir* = ".nimver"
+const ConfigRelPath* = ConfigDir / ConfigName
+
+func configPath*(repoRoot: string): string =
+  repoRoot / ConfigRelPath
 
 proc parseSharedChanges(value: string): SharedChangesKind =
   case value.strip().toLowerAscii()
@@ -80,14 +84,8 @@ proc validateWorkspaceConfig(config: Config, path: string) =
     packageNames[package.name] = true
     manifestPaths[package.manifestPath] = true
 
-proc loadConfig*(repoRoot: string): Config =
-  let path = configPath(repoRoot)
-  if not fileExists(path):
-    raise newException(
-      IOError, "Config not found at " & path & ". Run `nimver init` first."
-    )
-
-  var stream = newFileStream(path, fmRead)
+proc parseConfig*(contents, path: string): Config =
+  var stream = newStringStream(contents)
   defer:
     stream.close()
 
@@ -166,6 +164,14 @@ proc loadConfig*(repoRoot: string): Config =
       raise newException(IOError, "Error parsing " & path & ": " & event.msg)
 
   validateWorkspaceConfig(result, path)
+
+proc loadConfig*(repoRoot: string): Config =
+  let path = configPath(repoRoot)
+  if not fileExists(path):
+    raise newException(
+      IOError, "Config not found at " & path & ". Run `nimver init` first."
+    )
+  parseConfig(readFile(path), path)
 
 proc lookupLevel(config: Config, commitType: string): Result[BumpLevel] =
   let key = commitType.toLowerAscii()

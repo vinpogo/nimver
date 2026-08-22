@@ -35,9 +35,9 @@ fi
 
 # --- nimver ----------------------------------------------------------------
 # Nim projects in this workspace version themselves with nimver: Conventional
-# Commits are validated by a commit-msg hook, and the resulting bump level is
-# recorded by a post-commit hook. A fresh checkout has no hooks (git never
-# clones them), so install them here.
+# Commits are validated by a commit-msg hook, and a release reads the bump
+# levels straight off the commits. A fresh checkout has no hooks (git never
+# clones them), so install it here.
 
 shopt -s nullglob
 nimble_manifests=(*.nimble)
@@ -73,12 +73,12 @@ fi
 hooks_dir="$(git rev-parse --git-path hooks)"
 mkdir -p "$hooks_dir"
 
-# The hook bodies mirror `nimver install-hooks` (src/hooks.nim) rather than
-# shelling out to it: the hooks need the absolute path resolved above, since
-# the shell that runs them has no guarantee of an activated toolchain on
-# PATH. Writing them here also keeps a checkout working when nimver is not
-# installed yet, or is older than the release that taught `install-hooks`
-# about checkouts whose .git is a file.
+# The hook body mirrors `nimver install-hooks` (src/commands/installHooks.nim)
+# rather than shelling out to it: the hook needs the absolute path resolved
+# above, since the shell that runs it has no guarantee of an activated
+# toolchain on PATH. Writing it here also keeps a checkout working when nimver
+# is not installed yet, or is older than the release that taught
+# `install-hooks` about checkouts whose .git is a file.
 #
 # A hook is only ever replaced when it carries a marker proving it was
 # generated - our own, or the one `nimver install-hooks` writes. A hook that
@@ -86,8 +86,8 @@ mkdir -p "$hooks_dir"
 # *and* do other work), and git shares one hooks directory across every
 # worktree of a repository, so overwriting it would break all of them.
 marker='# managed-by: .agents/prepare (nimver hooks)'
-# From src/hooks.nim. If that text ever changes, the worst case is that we
-# stop recognising nimver's own hooks and leave them in place.
+# From src/commands/installHooks.nim. If that text ever changes, the worst case
+# is that we stop recognising nimver's own hooks and leave them in place.
 nimver_marker='# Installed by nimver. Do not edit by hand;'
 
 write_hook() {
@@ -113,37 +113,14 @@ exec "\$NIMVER" check-commit-msg "\$1"
 EOF
 )"
 
-write_hook post-commit "$(
-  cat <<EOF
-#!/bin/sh
-${marker}
-# Regenerate by re-running .agents/prepare; mirrors \`nimver install-hooks\`.
-#
-# Guard against re-entrancy: \`record-commit\` folds its note file into HEAD via
-# \`commit --amend\`, which triggers this same hook again.
-if [ -n "\$NIMVER_AMENDING" ]; then
-  exit 0
-fi
-NIMVER='${nimver_bin}'
-command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
-exec "\$NIMVER" record-commit
-EOF
-)"
-
-write_hook post-rewrite "$(
-  cat <<EOF
-#!/bin/sh
-${marker}
-# Regenerate by re-running .agents/prepare; mirrors \`nimver install-hooks\`.
-#
-# Runs once a rebase has finished rewriting commits. \`post-commit\` fires while
-# the rebase is still running, where amending would derail the sequencer, so
-# reworded commits get their notes corrected here instead.
-if [ -n "\$NIMVER_AMENDING" ]; then
-  exit 0
-fi
-NIMVER='${nimver_bin}'
-command -v "\$NIMVER" >/dev/null 2>&1 || NIMVER=nimver
-exec "\$NIMVER" record-rewrite "\$1"
-EOF
-)"
+# nimver used to keep a file per pending change, written by a post-commit hook
+# and kept in step with its commit by a post-rewrite one. A release reads the
+# commits themselves now, and those hooks call subcommands that no longer
+# exist - left behind in a checkout they would fail on every commit.
+for retired in post-commit post-rewrite; do
+  path="$hooks_dir/$retired"
+  if [[ -e $path ]] && grep -qxF -e "$marker" -e "$nimver_marker" "$path"; then
+    rm -f "$path"
+    log "removed obsolete $retired hook"
+  fi
+done

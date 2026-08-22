@@ -38,19 +38,20 @@ A breaking marker forces `major` regardless of the type's configured bump.
 Remember that bump levels never stack: the release takes the *highest* pending
 level, so one stray `!` turns an entire release into a major.
 
-## Change notes must match their commits
+## The commit message is the record
 
-The `post-commit` hook records a note under `.nimver/changes/` for the commit it
-runs on, and rewrites it on amend. Rewording during a rebase is handled by
-`post-rewrite` once the rebase finishes, which re-records every rewritten commit
-and folds the corrections into HEAD - so relabelling `fix:` to `feat:` updates
-`bump=` on its own.
+Nothing is written down while committing. `bump` reads the commits between the
+last release and HEAD, and each message decides its own bump level - so
+rewording `fix:` to `feat:`, reordering, squashing or amending needs no
+follow-up anywhere. The only hook is `commit-msg`, and all it does is refuse a
+message a release would not be able to read.
 
-Those hooks only run when they are installed: `.agents/prepare` writes them for
-a fresh checkout, and `nimver install-hooks --force` regenerates them. If you
-rewrite history with hooks bypassed (`NIMVER_AMENDING=1`, or a checkout without
-hooks), fix the affected notes yourself - otherwise the changelog contradicts
-the history.
+Two consequences worth keeping in mind while working on this repository:
+
+- A commit is read under the configuration in *its own* tree. When changing
+  `.nimver/config.ini`, that applies from that commit onward, not backwards.
+- Committing with `--no-verify` skips the only check there is. A type no config
+  maps is then reported and skipped at release time rather than released.
 
 ## Everyday conventions
 

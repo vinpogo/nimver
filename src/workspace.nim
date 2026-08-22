@@ -102,45 +102,59 @@ proc packageNames*(workspace: Workspace): seq[string] =
   for package in workspace.packages:
     result.add(package.name)
 
-proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
+proc workspaceLayout*(
+    repoRoot: string, config: Config, detectedManifestNames: seq[string], quiet = false
+): Workspace =
+  ## The packages a configuration describes, and how changed files map onto
+  ## them. `detectedManifestNames` supplies the repository root's manifests for
+  ## the case where the config declares no packages of its own; it comes from
+  ## the working tree for a release, and from a commit's own tree when reading
+  ## history back, so that a change is attributed the way the repository was
+  ## laid out when it was made.
+  ##
+  ## Manifests are not required to exist: one that a past commit had may be
+  ## long gone. Only a package actually being released is read from disk.
+  ## `quiet` silences the advice about detected siblings, which is worth saying
+  ## once about the working tree and never about each commit behind it.
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
 
   if config.packages.len == 0:
-    let detectedManifests = findRootManifests(repoRoot)
-    if detectedManifests.len == 0:
+    if detectedManifestNames.len == 0:
       raise newException(
         IOError,
         "No supported project manifest found. Expected a .nimble file or package.json.",
       )
 
-    for detectedManifest in detectedManifests:
-      let manifestRelativePath =
-        normalizeRepoPath(relativePath(detectedManifest.filePath, repoRoot))
+    for manifestName in detectedManifestNames:
       # A lone manifest keeps the name `root`, which is what release naming
       # refers to.
-      let packageName = if detectedManifests.len == 1: "root" else: manifestRelativePath
+      let packageName = if detectedManifestNames.len == 1: "root" else: manifestName
       result.packages.add(
-        newWorkspacePackage(packageName, manifestRelativePath, detectedManifest)
+        newWorkspacePackage(
+          packageName, manifestName, manifestAt(repoRoot / manifestName)
+        )
       )
 
-    if detectedManifests.len > 1:
+    if detectedManifestNames.len > 1:
       # Nothing in the config says how detected siblings relate, and nearest
       # ancestor cannot tell them apart, so release them together unless the
       # config asked for separate releases outright.
       if config.strategyWasSpecified and config.workspaceStrategy == wsIndependent:
-        stderr.writeLine(
-          "nimver: found " & $detectedManifests.len &
-            " manifests in the repository root (" & result.packageNames().join(", ") &
-            "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
-        )
+        if not quiet:
+          stderr.writeLine(
+            "nimver: found " & $detectedManifestNames.len &
+              " manifests in the repository root (" & result.packageNames().join(", ") &
+              "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
+          )
       else:
         result.strategy = wsFixed
-        stderr.writeLine(
-          "nimver: found " & $detectedManifests.len &
-            " manifests in the repository root (" & result.packageNames().join(", ") &
-            "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
-        )
+        if not quiet:
+          stderr.writeLine(
+            "nimver: found " & $detectedManifestNames.len &
+              " manifests in the repository root (" & result.packageNames().join(", ") &
+              "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
+          )
     return
 
   for packageConfig in config.packages:
@@ -149,10 +163,23 @@ proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
       newWorkspacePackage(
         packageConfig.name,
         manifestRelativePath,
-        manifestFromPath(repoRoot / manifestRelativePath),
+        manifestAt(repoRoot / manifestRelativePath),
         packageConfig.sourceFilePatterns,
       )
     )
+
+proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
+  ## The workspace as the working tree has it, which is the one a release acts
+  ## on: every manifest it names has to be there to be read and rewritten.
+  var detectedManifestNames: seq[string] = @[]
+  for detectedManifest in findRootManifests(repoRoot):
+    detectedManifestNames.add(
+      normalizeRepoPath(relativePath(detectedManifest.filePath, repoRoot))
+    )
+
+  result = workspaceLayout(repoRoot, config, detectedManifestNames)
+  for package in result.packages:
+    discard manifestFromPath(package.manifest.filePath)
 
 proc findPackage*(workspace: Workspace, name: string): WorkspacePackage =
   for package in workspace.packages:
@@ -163,14 +190,6 @@ proc findPackage*(workspace: Workspace, name: string): WorkspacePackage =
     "Unknown package '" & name & "'. Configured packages: " &
       workspace.packageNames().join(", "),
   )
-
-proc effectivePackages*(workspace: Workspace, entry: ChangeEntry): seq[string] =
-  ## Notes recorded before per-package attribution existed carry no `packages`
-  ## list, so they count for every package.
-  if entry.affectedPackages.len == 0:
-    workspace.packageNames()
-  else:
-    entry.affectedPackages
 
 proc containsPath(packageRootDirectory, changedPath: string): bool =
   packageRootDirectory.len == 0 or changedPath.startsWith(packageRootDirectory & "/")

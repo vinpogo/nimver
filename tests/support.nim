@@ -47,8 +47,29 @@ proc run*(cmd: string, dir: string): tuple[output: string, code: int] =
   let r = execCmdEx(cmd, workingDir = dir, env = testEnv())
   (r.output, r.exitCode)
 
-proc changeNotes*(dir: string): seq[string] =
-  toSeq(walkFiles(dir / ".nimver" / "changes" / "*.txt"))
+proc pending*(dir: string, arguments = ""): string =
+  ## What a release would do right now. With nothing recorded anywhere, a dry
+  ## run is how a test asks which changes the history is understood to hold.
+  run("nimver bump --dry-run " & arguments, dir).output
+
+proc editorScript(name, sedProgram: string): string =
+  ## A one-line `sed` editor for git to call. Kept outside the repo under test
+  ## so these scripts do not turn up as untracked files in its `git status`.
+  result = TestRepoRoot / name & ".sh"
+  writeFile(result, "#!/bin/sh\nsed -i '" & sedProgram & "' \"$1\"\n")
+  setFilePermissions(result, {fpUserRead, fpUserWrite, fpUserExec})
+
+proc rebaseInteractive*(
+    dir, base, todoEdit: string, messageEdit = ""
+): tuple[output: string, code: int] =
+  ## Drives `git rebase -i` without an interactive editor: `todoEdit` is a `sed`
+  ## program applied to the todo list (turning a `pick` into a `reword`, say),
+  ## and `messageEdit` one applied to each message the rebase stops to edit.
+  let name = dir.lastPathPart
+  var command = "GIT_SEQUENCE_EDITOR=" & editorScript(name & "-todo", todoEdit)
+  if messageEdit.len > 0:
+    command.add(" GIT_EDITOR=" & editorScript(name & "-message", messageEdit))
+  run(command & " git rebase -i " & base, dir)
 
 proc initGitRepo(dir: string) =
   let commandResult = run("git init -q", dir)

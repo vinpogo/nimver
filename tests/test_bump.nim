@@ -6,6 +6,7 @@ import ./support
 
 suite "bump":
   test "bump with no pending changes is a no-op":
+    # Only `chore: init` behind it, which maps to `none`.
     let dir = freshRepo("bump-empty")
     let (output, code) = run("nimver bump", dir)
     check code == 0
@@ -20,7 +21,6 @@ suite "bump":
     check "0.1.0 -> 0.2.0" in output
     check "0.2.0" in readFile(dir / "pkg.nimble")
     check fileExists(dir / "CHANGELOG.md")
-    check changeNotes(dir).len == 0
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.2.0"
@@ -45,14 +45,16 @@ suite "bump":
     let (tags, _) = run("git tag", dir)
     check tags.strip() == "v0.2.0"
 
-  test "bump's release commit is not recorded as a pending change":
+  test "bump's release commit is not itself a pending change":
     let dir = freshRepo("bump-commit")
     discard commitFile(dir, "a.txt", "hi", "feat: add feature")
     let (_, code) = run("nimver bump", dir)
     check code == 0
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.2.0"
-    check changeNotes(dir).len == 0
+    # The release commit is itself a `version:` commit, which is ignored - so
+    # releasing twice in a row has nothing to release the second time.
+    check "Nothing to bump" in run("nimver bump", dir).output
 
   test "bump --no-commit --no-tag only touches files, leaving history untouched":
     let dir = freshRepo("bump-no-commit-no-tag")
@@ -64,7 +66,6 @@ suite "bump":
     check "0.1.0 -> 0.2.0" in output
     check "0.2.0" in readFile(dir / "pkg.nimble")
     check fileExists(dir / "CHANGELOG.md")
-    check changeNotes(dir).len == 0
 
     let (headAfter, _) = run("git rev-parse HEAD", dir)
     check headBefore.strip() == headAfter.strip()

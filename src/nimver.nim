@@ -1,16 +1,15 @@
 ## nimver: semantic versioning for Nim projects, driven by
 ## Conventional Commits and wired into Git via a `commit-msg` hook.
 
-import std/[os, strutils, sequtils, algorithm, sets, tables]
+import std/[os, strutils, sequtils, algorithm, tables]
 import ./gitutils
 import ./config
-import ./commitparser
 import ./changes
+import ./history
 import ./adapters/manifest
 import ./changelog
 import ./semver
 import ./workspace
-import ./result
 import ./commands/init
 import ./commands/version
 import ./commands/installHooks
@@ -28,99 +27,6 @@ Usage:
 See https://github.com/vinpogo/nimver for details.
 
 """
-
-proc syncNoteForCommit(
-    repoRoot: string, cfg: Config, projectWorkspace: Workspace, revision: string
-): bool =
-  ## Brings the change note recorded for `revision` in line with that commit's
-  ## message, and reports whether the working tree changed.
-  ##
-  ## The note a commit recorded shows up as an *addition* in its own diff, so
-  ## that is what gets replaced. Only additions count: a release commit
-  ## legitimately rewrites notes still pending for other packages, and those
-  ## must survive. Rebuilding from the message rather than patching it means a
-  ## reword that changes the type (`fix:` -> `feat:`) fixes the bump level too.
-  var dirty = false
-  for path in gitAddedPaths(repoRoot, revision):
-    if path.startsWith(ChangesRelPrefix) and path.endsWith(".txt"):
-      let notePath = repoRoot / path
-      if fileExists(notePath):
-        removeFile(notePath)
-        dirty = true
-
-  let parseResult = parseCommitMessage(gitCommitMessage(repoRoot, revision))
-  if isFailure(parseResult):
-    stderr.writeLine("nimver: skipping unparseable commit: " & parseResult.error)
-    return dirty
-
-  let maybeLevel = validateAndLookup(cfg, parseResult.value)
-  if isFailure(maybeLevel):
-    stderr.writeLine("nimver: skipping commit: " & maybeLevel.error)
-    return dirty
-  if maybeLevel.value == blIgnore:
-    return dirty
-
-  let affectedPackages =
-    affectedPackageNames(projectWorkspace, gitChangedPaths(repoRoot, revision))
-  if affectedPackages.len == 0:
-    return dirty
-
-  discard writeChangeFile(
-    repoRoot, parseResult.value.commitType, maybeLevel.value,
-    parseResult.value.breaking, affectedPackages, parseResult.value.rawMessage,
-  )
-  true
-
-proc foldNotesIntoHead(repoRoot: string) =
-  gitAdd(repoRoot, changesDir(repoRoot))
-  putEnv("NIMVER_AMENDING", "1")
-  gitAmendNoVerify(repoRoot)
-
-proc cmdRecordCommit(repoRoot: string) =
-  ## Runs as the `post-commit` hook. Writes the bump-note file for the
-  ## commit that was just created and folds it into that same commit via a
-  ## guarded amend (see the `post-commit` hook script for the re-entrancy
-  ## guard).
-  if isRebaseInProgress(repoRoot):
-    # Amending here would fight with the rebase sequencer's own bookkeeping
-    # (see `isRebaseInProgress`). The `post-rewrite` hook picks the work up
-    # once the rebase has finished.
-    return
-
-  let cfg = loadConfig(repoRoot)
-  let projectWorkspace = loadWorkspace(repoRoot, cfg)
-  if syncNoteForCommit(repoRoot, cfg, projectWorkspace, "HEAD"):
-    foldNotesIntoHead(repoRoot)
-
-proc cmdRecordRewrite(repoRoot, rewriteKind: string) =
-  ## Runs as the `post-rewrite` hook, once `git rebase` has finished replaying
-  ## commits. Git feeds `<old> <new>` pairs on stdin.
-  ##
-  ## This is where reworded commits get their notes corrected: `post-commit`
-  ## fires *during* the rebase, when amending would derail the sequencer. The
-  ## corrected notes are folded into HEAD rather than into each rewritten
-  ## commit - moving them back would mean rewriting history a second time,
-  ## and what a release reads is the set of pending notes, not which commit
-  ## carries them.
-  if rewriteKind == "amend":
-    return # `post-commit` already re-recorded that commit
-
-  let cfg = loadConfig(repoRoot)
-  let projectWorkspace = loadWorkspace(repoRoot, cfg)
-
-  var rewrittenRevisions: seq[string] = @[]
-  for line in stdin.lines:
-    let fields = line.splitWhitespace()
-    if fields.len >= 2:
-      rewrittenRevisions.add(fields[1])
-
-  var dirty = false
-  for revision in rewrittenRevisions:
-    if syncNoteForCommit(repoRoot, cfg, projectWorkspace, revision):
-      dirty = true
-
-  if dirty:
-    foldNotesIntoHead(repoRoot)
 
 proc highestBumpLevel(entries: seq[ChangeEntry]): BumpLevel =
   result = blNone
@@ -172,6 +78,15 @@ proc releaseCommitSubjectFor(
   else:
     "version: v" & $version
 
+proc releaseNamingFor(
+    projectWorkspace: Workspace, package: WorkspacePackage
+): ReleaseNaming =
+  ## How this package's releases are named, which is how reading history back
+  ## finds the last of them. Mirrors `releaseTagFor` and
+  ## `releaseCommitSubjectFor` - change those and this has to follow, or a
+  ## release stops recognising its own predecessor.
+  newReleaseNaming(package.name, projectWorkspace.hasSeveralPackages())
+
 proc releaseLabelFor(projectWorkspace: Workspace, package: WorkspacePackage): string =
   ## What the release is called in progress output: the package name when
   ## several exist, otherwise the same wording as a fixed release.
@@ -216,7 +131,6 @@ proc bumpFixedWorkspace(
   for package in projectWorkspace.packages:
     writeVersion(package.manifest, next)
   prependToChangelog(changelogPath, section)
-  deleteChangeFiles(entries)
   for package in projectWorkspace.packages:
     echo "Updated ",
       package.manifest.filePath, " (", package.manifest.displayName(), ")"
@@ -226,7 +140,6 @@ proc bumpFixedWorkspace(
     for package in projectWorkspace.packages:
       gitAdd(repoRoot, package.manifest.filePath)
     gitAdd(repoRoot, changelogPath)
-    gitAdd(repoRoot, changesDir(repoRoot))
     gitCommit(repoRoot, "version: v" & $next)
     echo "Created release commit."
 
@@ -238,7 +151,7 @@ proc bumpFixedWorkspace(
       echo "Created tag v" & $next
 
 type PackageRelease = object
-  ## One package's planned release: what it moves to, and the notes that say
+  ## One package's planned release: what it moves to, and the changes that say
   ## so. Planning every package before writing anything keeps a release of
   ## several packages a single commit.
   package: WorkspacePackage
@@ -253,19 +166,25 @@ proc hasPendingChanges(release: PackageRelease): bool =
   release.entries.len > 0
 
 proc isReleasable(release: PackageRelease): bool =
-  ## Pending notes that all say `bump=none` belong in the changelog of some
+  ## Pending changes that all map to `none` belong in the changelog of some
   ## later release, not in a release of their own.
   release.hasPendingChanges() and release.level != blNone
 
 proc planRelease(
     repoRoot: string,
     projectWorkspace: Workspace,
+    currentConfig: Config,
     package: WorkspacePackage,
-    allEntries: seq[ChangeEntry],
 ): PackageRelease =
+  ## Every package reads its own stretch of history, ending at its own last
+  ## release. A change touching two packages is therefore counted once for
+  ## each, however far apart the two last went out - which is the whole point
+  ## of releasing them independently.
   result.package = package
-  result.entries =
-    allEntries.filterIt(package.name in projectWorkspace.effectivePackages(it))
+  result.entries = pendingChanges(
+      repoRoot, currentConfig, releaseNamingFor(projectWorkspace, package)
+    )
+    .filterIt(package.name in it.affectedPackages)
   result.level = highestBumpLevel(result.entries)
   if not result.isReleasable():
     return
@@ -297,25 +216,6 @@ proc changelogWrites(releases: seq[PackageRelease]): seq[ChangelogWrite] =
       writeIndexByPath[release.changelogPath] = result.len
       result.add(ChangelogWrite(path: release.changelogPath, text: release.section))
 
-proc consumeChangeNotes(projectWorkspace: Workspace, releases: seq[PackageRelease]) =
-  ## A note shared by several packages is only spent for the ones being
-  ## released. It has to be rewritten once against the whole release set:
-  ## rewriting it per package would restore the packages an earlier rewrite in
-  ## the same run had already removed, since each release still holds the note
-  ## as it was read from disk.
-  var releasedNames = initHashSet[string]()
-  for release in releases:
-    releasedNames.incl(release.package.name)
-
-  var rewrittenPaths = initHashSet[string]()
-  for release in releases:
-    for entry in release.entries:
-      if rewrittenPaths.containsOrIncl(entry.path):
-        continue
-      entry.rewriteAffectedPackages(
-        projectWorkspace.effectivePackages(entry).filterIt(it notin releasedNames)
-      )
-
 proc releaseCommitSubject(
     projectWorkspace: Workspace, releases: seq[PackageRelease]
 ): string =
@@ -330,7 +230,7 @@ proc bumpIndependentPackages(
     repoRoot: string,
     projectWorkspace: Workspace,
     candidates: seq[WorkspacePackage],
-    allEntries: seq[ChangeEntry],
+    currentConfig: Config,
     doCommit, doTag, dryRun: bool,
 ) =
   ## Releases each of `candidates` that has pending changes, every package to
@@ -338,7 +238,7 @@ proc bumpIndependentPackages(
   var releases: seq[PackageRelease] = @[]
   var anyPending = false
   for package in candidates:
-    let release = planRelease(repoRoot, projectWorkspace, package, allEntries)
+    let release = planRelease(repoRoot, projectWorkspace, currentConfig, package)
     if release.hasPendingChanges():
       anyPending = true
     if release.isReleasable():
@@ -394,14 +294,12 @@ proc bumpIndependentPackages(
   for changelog in changelogs:
     prependToChangelog(changelog.path, changelog.text)
     echo "Updated ", changelog.path
-  consumeChangeNotes(projectWorkspace, releases)
 
   if doCommit:
     for release in releases:
       gitAdd(repoRoot, release.package.manifest.filePath)
     for changelog in changelogs:
       gitAdd(repoRoot, changelog.path)
-    gitAdd(repoRoot, changesDir(repoRoot))
     gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
     echo "Created release commit."
 
@@ -418,10 +316,6 @@ proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bo
   ## / `--no-tag` on the command line opt out of either one.
   let config = loadConfig(repoRoot)
   let projectWorkspace = loadWorkspace(repoRoot, config)
-  let entries = readChangeFiles(repoRoot)
-  if entries.len == 0:
-    echo "No pending changes found in .nimver/changes. Nothing to bump."
-    return
 
   case projectWorkspace.strategy
   of wsFixed:
@@ -430,6 +324,13 @@ proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bo
         IOError,
         "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent.",
       )
+    # One version for the whole repository, so one stretch of history behind
+    # it: everything since the release that last moved that version.
+    let entries =
+      pendingChanges(repoRoot, config, newReleaseNaming("", namespaced = false))
+    if entries.len == 0:
+      echo "No changes since the last release. Nothing to bump."
+      return
     bumpFixedWorkspace(repoRoot, projectWorkspace, entries, doCommit, doTag, dryRun)
   of wsIndependent:
     # A bare `bump` releases everything that has pending changes; naming a
@@ -440,7 +341,7 @@ proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bo
       else:
         projectWorkspace.packages
     bumpIndependentPackages(
-      repoRoot, projectWorkspace, candidates, entries, doCommit, doTag, dryRun
+      repoRoot, projectWorkspace, candidates, config, doCommit, doTag, dryRun
     )
 
 when isMainModule:
@@ -471,16 +372,6 @@ when isMainModule:
         stderr.writeLine("Usage: nimver check-commit-msg <path-to-message-file>")
         quit(1)
       cmdCheckCommitMsg(repoRoot, args[1])
-    of "record-commit":
-      cmdRecordCommit(repoRoot)
-    of "record-rewrite":
-      cmdRecordRewrite(
-        repoRoot,
-        if args.len > 1:
-          args[1]
-        else:
-          "",
-      )
     of "bump":
       var requestedPackageName = ""
       for arg in args[1 .. ^1]:
