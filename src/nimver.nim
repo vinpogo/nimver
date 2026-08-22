@@ -316,8 +316,17 @@ proc cmdBump(repoRoot: string, requestedPackageName: Option[string], dryRun: boo
       )
     # One version for the whole repository, so one stretch of history behind
     # it: everything since the release that last moved that version.
-    let entries =
-      pendingChanges(repoRoot, config, newReleaseNaming("", namespaced = false))
+    # When there is exactly one package we know its name and can also
+    # recognise its old namespaced tags as boundaries, in case the workspace
+    # previously had several packages and has since been reduced to one.
+    let survivingName =
+      if projectWorkspace.packages.len == 1:
+        projectWorkspace.packages[0].name
+      else:
+        ""
+    let entries = pendingChanges(
+      repoRoot, config, newReleaseNaming(survivingName, namespaced = false)
+    )
     if entries.len == 0:
       echo "No changes since the last release. Nothing to bump."
       return
