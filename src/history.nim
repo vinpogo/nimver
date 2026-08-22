@@ -86,9 +86,9 @@ proc snapshotAt(repoRoot, revision: string, currentConfig: Config): Snapshot =
   ## under the configuration as it is now.
   result.config = currentConfig
   let contents = gitFileAtRevision(repoRoot, revision, ConfigRelPath)
-  if contents.len > 0:
+  if contents.isSome():
     try:
-      result.config = parseConfig(contents, revision & ":" & ConfigRelPath)
+      result.config = parseConfig(contents.get, revision & ":" & ConfigRelPath)
     except IOError, ValueError:
       stderr.writeLine(
         "nimver: keeping the current configuration for " & revision[0 ..< 8] & ": " &
