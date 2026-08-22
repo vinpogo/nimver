@@ -3,8 +3,8 @@ nim = "latest"
 "github:nim-lang/langserver" = { version = "1.14.0", exe = "nimlangserver" }
 "github:arnetheduck/nph" = { version = "0.7.0", exe = "nph" }
 
-[task.test]
-command = "nimble install && nimble test"
+[tasks.test]
+run = "nimble build && nimble install && nimble test"
 
-[task.build]
-command = "nimble build"
+[tasks.build]
+run = "nimble build"
