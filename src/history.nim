@@ -29,6 +29,10 @@ type
     tagPrefix*: string
       ## `v` on its own, or `<package>-v` when several packages are released apart.
     packageName*: string ## Empty when releases are not namespaced by package.
+    legacyFlatPrefix*: string
+      ## Set to `v` for namespaced packages so that flat-era release tags
+      ## (`v1.2.3`) are still recognised as boundaries after the workspace
+      ## gains a second package.  Empty when the package is already flat.
 
   Snapshot = object
     ## How the repository was set up at some commit: what the types map to, and
@@ -38,15 +42,20 @@ type
 
 proc newReleaseNaming*(packageName: string, namespaced: bool): ReleaseNaming =
   if namespaced:
-    ReleaseNaming(tagPrefix: packageName & "-v", packageName: packageName)
+    ReleaseNaming(
+      tagPrefix: packageName & "-v", packageName: packageName, legacyFlatPrefix: "v"
+    )
   else:
     ReleaseNaming(tagPrefix: "v", packageName: "")
 
 proc isReleaseTag(naming: ReleaseNaming, tagName: string): bool =
   ## `v1.2.0` and `web-v1.2.0` are releases; `verify-fix` and `webhooks` are
   ## not, hence the digit.
-  tagName.len > naming.tagPrefix.len and tagName.startsWith(naming.tagPrefix) and
-    tagName[naming.tagPrefix.len].isDigit()
+  proc matchesPrefix(tag, prefix: string): bool =
+    tag.len > prefix.len and tag.startsWith(prefix) and tag[prefix.len].isDigit()
+
+  tagName.matchesPrefix(naming.tagPrefix) or
+    (naming.legacyFlatPrefix.len > 0 and tagName.matchesPrefix(naming.legacyFlatPrefix))
 
 proc endsTheRange(
     naming: ReleaseNaming,
