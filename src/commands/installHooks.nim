@@ -11,10 +11,6 @@ exec nimver check-commit-msg "$1"
 """
 
 const RetiredHooks = ["post-commit", "post-rewrite"]
-  ## nimver used to record a file per change and keep it in step with its
-  ## commit from these two. A release reads the commits themselves now, so the
-  ## hooks have nothing left to do - and left in place they would call
-  ## subcommands this version no longer has.
 
 const ExecutablePerms = {
   fpUserRead, fpUserWrite, fpUserExec, fpGroupRead, fpGroupExec, fpOthersRead,
@@ -32,8 +28,6 @@ proc writeHook(hooksDir, name, content: string, force: bool) =
   setFilePermissions(hookPath, ExecutablePerms)
 
 proc removeRetiredHooks(hooksDir: string) =
-  ## Only removes hooks nimver wrote: anything hand-written under those names
-  ## is somebody else's, whatever it happens to be called.
   for hookName in RetiredHooks:
     let hookPath = hooksDir / hookName
     if fileExists(hookPath) and readFile(hookPath).contains(HookMarker):
