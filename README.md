@@ -44,14 +44,11 @@ nimver bump --dry-run # what it would do, and the changelog entry it would write
 
 ### What counts as pending
 
-`bump` looks back from `HEAD` to the last release of the package it is releasing — the newest commit carrying that package's release tag, or failing that its `version:` release commit, so `--no-tag` releases work too. Every commit in between is a pending change, and its type decides the bump.
+`bump` looks back from `HEAD` to the last release of the package it is releasing — the newest commit carrying that package's release tag. Every commit in between is a pending change, and its type decides the bump.
 
 Two things follow from reading history rather than a recorded state:
 
 - **CI needs the history and the tags.** Shallow clones do not have them; on GitHub Actions that means `fetch-depth: 0` on `actions/checkout`.
-- **`bump --no-commit --no-tag` leaves no marker behind**, so the next release counts those changes again. That combination means you are taking over from there.
-
-Adopting nimver in a repository that already has a past? Without a release to stop at, the first `bump` counts the whole history. Tag the version you are already on (`git tag v1.4.2`) and it starts from there instead.
 
 ## Supported project manifests
 
@@ -164,7 +161,7 @@ wip = ignore
 ```
 nimver init
 nimver install-hooks [--force]
-nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
+nimver bump [<package>] [--dry-run]
 nimver version
 
 Invoked by the installed hook (not usually run by hand):
