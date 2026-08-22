@@ -1,35 +1,20 @@
-import std/os
+import std/[os, strutils]
 import ../gitutils
 
-const CommitMsgHook = """#!/bin/sh
-# Installed by nimver. Do not edit by hand;
+const HookMarker = "# Installed by nimver."
+
+const CommitMsgHook =
+  """#!/bin/sh
+""" & HookMarker & """ Do not edit by hand;
 # re-run `nimver install-hooks --force` to regenerate.
 exec nimver check-commit-msg "$1"
 """
 
-const PostCommitHook = """#!/bin/sh
-# Installed by nimver. Do not edit by hand;
-# re-run `nimver install-hooks --force` to regenerate.
-#
-# Guard against re-entrancy: `record-commit` folds its note file into HEAD via
-# `commit --amend`, which triggers this same hook again.
-if [ -n "$NIMVER_AMENDING" ]; then
-  exit 0
-fi
-exec nimver record-commit
-"""
-
-const PostRewriteHook = """#!/bin/sh
-# Installed by nimver. Do not edit by hand;
-# re-run `nimver install-hooks --force` to regenerate.
-#
-# Runs once a rebase has finished rewriting commits, so notes reworded along
-# the way can be brought back in line with their messages.
-if [ -n "$NIMVER_AMENDING" ]; then
-  exit 0
-fi
-exec nimver record-rewrite "$1"
-"""
+const RetiredHooks = ["post-commit", "post-rewrite"]
+  ## nimver used to record a file per change and keep it in step with its
+  ## commit from these two. A release reads the commits themselves now, so the
+  ## hooks have nothing left to do - and left in place they would call
+  ## subcommands this version no longer has.
 
 const ExecutablePerms = {
   fpUserRead, fpUserWrite, fpUserExec, fpGroupRead, fpGroupExec, fpOthersRead,
@@ -46,6 +31,15 @@ proc writeHook(hooksDir, name, content: string, force: bool) =
   writeFile(hookPath, content)
   setFilePermissions(hookPath, ExecutablePerms)
 
+proc removeRetiredHooks(hooksDir: string) =
+  ## Only removes hooks nimver wrote: anything hand-written under those names
+  ## is somebody else's, whatever it happens to be called.
+  for hookName in RetiredHooks:
+    let hookPath = hooksDir / hookName
+    if fileExists(hookPath) and readFile(hookPath).contains(HookMarker):
+      removeFile(hookPath)
+      echo "Removed obsolete ", hookName, " hook at ", hookPath
+
 proc cmdInstallHooks*(repoRoot: string, force: bool) =
   let hooksDir = gitPath(repoRoot, "hooks")
   if not dirExists(hooksDir):
@@ -54,8 +48,4 @@ proc cmdInstallHooks*(repoRoot: string, force: bool) =
   writeHook(hooksDir, "commit-msg", CommitMsgHook, force)
   echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
 
-  writeHook(hooksDir, "post-commit", PostCommitHook, force)
-  echo "Installed post-commit hook at ", hooksDir / "post-commit"
-
-  writeHook(hooksDir, "post-rewrite", PostRewriteHook, force)
-  echo "Installed post-rewrite hook at ", hooksDir / "post-rewrite"
+  removeRetiredHooks(hooksDir)

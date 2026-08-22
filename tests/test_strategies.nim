@@ -21,7 +21,6 @@ suite "workspace strategies":
       dir / "packages" / "web" / "package.json"
     )
     check "version = \"0.2.0\"" in readFile(dir / "packages" / "cli" / "cli.nimble")
-    check changeNotes(dir).len == 0
 
     let (changedFiles, _) = run("git show --pretty=format: --name-only HEAD", dir)
     check "packages/web/package.json" in changedFiles
@@ -72,29 +71,28 @@ suite "workspace strategies":
     check subject.strip() == "version(web): v0.2.0"
     let (tags, _) = run("git tag", dir)
     check "web-v0.2.0" in tags.strip()
-    check changeNotes(dir).len == 0
 
-  test "independent bump consumes a shared note one package at a time":
+  test "a shared change is released once per package, on each one's schedule":
+    # Each package reads back to its *own* last release, so releasing `web`
+    # says nothing about what `cli` still owes - the one commit is spent twice,
+    # once by each.
     let dir = freshWorkspaceRepo("independent-shared", strategy = "independent")
     discard commitFile(dir, "README.md", "# Workspace\n", "feat: shared change")
-    var notes = changeNotes(dir)
-    require notes.len == 1
-    check "packages=web,cli" in readFile(notes[0])
 
-    # Releasing `web` leaves the note pending for `cli` only.
     var (output, code) = run("nimver bump web", dir)
     check code == 0
     check "0.1.0 -> 0.2.0" in output
-    notes = changeNotes(dir)
-    require notes.len == 1
-    check "packages=cli" in readFile(notes[0])
-    check "feat: shared change" in readFile(notes[0])
+    check "shared change" in readFile(dir / "packages" / "web" / "CHANGELOG.md")
 
-    # Releasing `cli` consumes the last package, so the note is removed.
+    # `cli` has not released yet, so the change is still ahead of it.
+    check "Bumping cli: 0.1.0 -> 0.2.0 (minor)" in pending(dir, "cli")
     (output, code) = run("nimver bump cli", dir)
     check code == 0
     check "0.1.0 -> 0.2.0" in output
-    check changeNotes(dir).len == 0
+    check "shared change" in readFile(dir / "packages" / "cli" / "CHANGELOG.md")
+
+    # And now neither has anything left.
+    check "Nothing to bump" in pending(dir)
 
     check "\"version\": \"0.2.0\"" in readFile(
       dir / "packages" / "web" / "package.json"
@@ -135,7 +133,6 @@ suite "workspace strategies":
     check fileExists(dir / "packages" / "web" / "CHANGELOG.md")
     check fileExists(dir / "packages" / "cli" / "CHANGELOG.md")
     check not fileExists(dir / "CHANGELOG.md")
-    check changeNotes(dir).len == 0
 
     # One release commit, carrying one tag per released package.
     # Alphabetical by package name, not the order the config declares them in.
@@ -163,20 +160,18 @@ suite "workspace strategies":
     let (tags, _) = run("git tag", dir)
     check tags.strip() == "web-v0.2.0"
 
-  test "independent bump without a package consumes a shared note once":
+  test "independent bump releases a shared change for every package at once":
     let dir = freshWorkspaceRepo("independent-all-shared", strategy = "independent")
     discard commitFile(dir, "README.md", "# Workspace\n", "feat: shared change")
-    require changeNotes(dir).len == 1
 
     let (output, code) = run("nimver bump", dir)
     check code == 0
     check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in output
     check "Bumping cli: 0.1.0 -> 0.2.0 (minor)" in output
 
-    # Both packages spend the note in the same run, so nothing stays pending.
-    check changeNotes(dir).len == 0
     check "shared change" in readFile(dir / "packages" / "web" / "CHANGELOG.md")
     check "shared change" in readFile(dir / "packages" / "cli" / "CHANGELOG.md")
+    check "Nothing to bump" in pending(dir)
 
   test "independent bump rejects an unknown package":
     let dir = freshWorkspaceRepo("independent-unknown", strategy = "independent")
@@ -234,7 +229,6 @@ suite "workspace strategies":
     check changelog.find("## [alpha") < changelog.find("## [beta")
     # One prepend for the file, so the header is not repeated per package.
     check changelog.count("# Changelog") == 1
-    check changeNotes(dir).len == 0
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: alpha-v0.2.0, beta-v0.1.1"
@@ -267,17 +261,10 @@ suite "workspace strategies":
     discard
       commitFile(dir, "packages/both/notes.txt", "shared\n", "feat: shared change")
 
-    let notes = changeNotes(dir)
-    require notes.len == 1
-    let note = readFile(notes[0])
-    check "alpha" in note
-    check "beta" in note
-
     let (output, code) = run("nimver bump", dir)
     check code == 0
     check "Bumping alpha: 0.1.0 -> 0.2.0 (minor)" in output
     check "Bumping beta: 0.1.0 -> 0.2.0 (minor)" in output
-    check changeNotes(dir).len == 0
 
     let changelog = readFile(dir / "packages" / "both" / "CHANGELOG.md")
     check "## [alpha 0.2.0]" in changelog
@@ -288,29 +275,14 @@ suite "workspace strategies":
     let dir = freshSiblingWorkspaceRepo("siblings-shared-none", sharedChanges = "none")
     discard
       commitFile(dir, "packages/both/notes.txt", "shared\n", "feat: shared change")
-    check changeNotes(dir).len == 0
+    check "Nothing to bump" in pending(dir)
 
     # A sibling's own manifest still belongs to it, whatever the policy.
     discard commitFile(
       dir, "packages/both/alpha.nimble", "version = \"0.1.0\"\n# alpha\n",
       "fix: annotate alpha",
     )
-    let notes = changeNotes(dir)
-    require notes.len == 1
-    check "packages=alpha" in readFile(notes[0])
-
-  test "independent bump treats a pre-workspace note as affecting every package":
-    let dir = freshWorkspaceRepo("independent-legacy-note", strategy = "independent")
-    # A note in the pre-workspace format: no `packages=` line at all.
-    writeFile(
-      dir / ".nimver" / "changes" / "1700000000000-aaaaaa.txt",
-      "type=feat\nbump=minor\nbreaking=false\n===\nfeat: recorded by an older nimver\n",
-    )
-
-    let (output, code) = run("nimver bump web --no-commit --no-tag", dir)
-    check code == 0
-    check "Bumping web: 0.1.0 -> 0.2.0" in output
-
-    let notes = changeNotes(dir)
-    require notes.len == 1
-    check "packages=cli" in readFile(notes[0])
+    let dryRun = pending(dir)
+    check "Bumping alpha: 0.1.0 -> 0.1.1 (patch)" in dryRun
+    check "Bumping beta" notin dryRun
+    check "shared change" notin dryRun

@@ -1,10 +1,13 @@
 ## Small wrappers around the `git` CLI. We shell out rather than link a Git
 ## library to keep the tool dependency-free.
 
-import std/[osproc, strutils, sequtils, os]
+import std/[osproc, strutils, sequtils, os, tables]
+
+proc tryRunGit(args: seq[string]): tuple[output: string, exitCode: int] =
+  execCmdEx("git " & args.map(quoteShell).join(" "))
 
 proc runGit(args: seq[string]): string =
-  let (output, code) = execCmdEx("git " & args.map(quoteShell).join(" "))
+  let (output, code) = tryRunGit(args)
   if code != 0:
     raise newException(IOError, "git " & args.join(" ") & " failed: " & output.strip())
   output
@@ -40,45 +43,81 @@ proc gitCommit*(repoRoot: string, message: string) =
 proc gitTag*(repoRoot: string, tag: string) =
   discard runGit(@["-C", repoRoot, "tag", tag])
 
-proc gitCommitMessage*(repoRoot: string, revision = "HEAD"): string =
-  ## Full message (subject + body + footers) of a commit.
-  runGit(@["-C", repoRoot, "log", "-1", "--pretty=%B", revision])
+type CommitRecord* = object ## One commit as a release needs to read it.
+  hash*: string
+  message*: string ## Subject, body and footers, as committed.
+  changedPaths*: seq[string]
 
-proc diffTreePaths(repoRoot, revision: string, extraArgs: seq[string]): seq[string] =
+const
+  RecordSeparator = "\x1e"
+  FieldSeparator = "\x1f"
+
+proc gitCommitsIn*(repoRoot: string, revisionRange: string): seq[CommitRecord] =
+  ## Every commit in `revisionRange`, newest first, with the paths it touched.
+  ##
+  ## Read in one go rather than a `git` call per commit: a release cycle can be
+  ## hundreds of commits long, and the message and the file list are all that
+  ## is wanted from each. Merges are left out - what they bring in is listed
+  ## individually, and their own messages are not Conventional Commits.
   let output = runGit(
-    @["-C", repoRoot, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root"] &
-      extraArgs & @[revision]
+    @[
+      "-C",
+      repoRoot,
+      "log",
+      "--no-merges",
+      "--name-only",
+      "--format=" & RecordSeparator & "%H" & FieldSeparator & "%B" & FieldSeparator,
+      revisionRange,
+    ]
+  )
+  for rawRecord in output.split(RecordSeparator):
+    if rawRecord.strip().len == 0:
+      continue
+    let fields = rawRecord.split(FieldSeparator)
+    if fields.len < 3:
+      continue
+    var record = CommitRecord(hash: fields[0].strip(), message: fields[1].strip())
+    for line in fields[2].splitLines():
+      let path = line.strip()
+      if path.len > 0:
+        record.changedPaths.add(path)
+    result.add(record)
+
+proc gitTagsByCommit*(repoRoot: string): Table[string, seq[string]] =
+  ## Tag names by the commit they mark. Annotated tags resolve through their
+  ## tag object, so both kinds land on the commit a release would have tagged.
+  let output = runGit(
+    @[
+      "-C", repoRoot, "for-each-ref",
+      "--format=%(objectname) %(*objectname) %(refname:strip=2)", "refs/tags",
+    ]
   )
   for line in output.splitLines():
-    let trimmedLine = line.strip()
-    if trimmedLine.len > 0:
-      result.add(trimmedLine)
+    let fields = line.splitWhitespace()
+    if fields.len < 2:
+      continue
+    # An annotated tag reports the commit it peels to in the second column; a
+    # lightweight one leaves it empty, so the first column is already a commit.
+    let commit =
+      if fields.len >= 3:
+        fields[1]
+      else:
+        fields[0]
+    let tagName = fields[^1]
+    result.mgetOrPut(commit, @[]).add(tagName)
 
-proc gitChangedPaths*(repoRoot: string, revision = "HEAD"): seq[string] =
-  ## Repo-relative paths added/modified/deleted by a commit, relative to its
-  ## parent (or, for a root commit, relative to the empty tree).
-  diffTreePaths(repoRoot, revision, @[])
+proc gitFileAtRevision*(repoRoot, revision, path: string): string =
+  ## The contents of a file as of a commit, or an empty string when the commit
+  ## did not have it.
+  let (output, code) = tryRunGit(@["-C", repoRoot, "show", revision & ":" & path])
+  if code != 0:
+    return ""
+  output
 
-proc gitAddedPaths*(repoRoot: string, revision = "HEAD"): seq[string] =
-  ## Repo-relative paths *added* by a commit. A change note recorded by a
-  ## previous `post-commit` shows up as an addition in its own commit, so this
-  ## is what identifies the note belonging to that commit. Notes that a release
-  ## commit rewrites or deletes show up as modifications/deletions instead, and
-  ## must survive: an independent release leaves a note pending for the packages
-  ## it did not release.
-  diffTreePaths(repoRoot, revision, @["--diff-filter=A"])
-
-proc gitAmendNoVerify*(repoRoot: string) =
-  ## Folds currently staged changes into HEAD without re-running hooks other
-  ## than `post-commit` (which the caller is responsible for guarding against
-  ## re-entrancy, e.g. via an environment variable).
-  discard runGit(@["-C", repoRoot, "commit", "--amend", "--no-edit", "--no-verify"])
-
-proc isRebaseInProgress*(repoRoot: string): bool =
-  ## During `git rebase -i`, each `reword`ed (or otherwise replayed) commit
-  ## re-triggers `post-commit`. Amending in response confuses the rebase
-  ## sequencer's own bookkeeping (it does its own internal amend for
-  ## `reword`, and does not expect us to move HEAD again on top of that), so
-  ## the caller should treat this as a no-op while a rebase is in progress.
-  dirExists(gitPath(repoRoot, "rebase-merge")) or
-    dirExists(gitPath(repoRoot, "rebase-apply"))
+proc gitRootEntryNames*(repoRoot, revision: string): seq[string] =
+  ## Names of the entries in a commit's root directory.
+  let output = runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision & ":"])
+  for line in output.splitLines():
+    let name = line.strip()
+    if name.len > 0:
+      result.add(name)

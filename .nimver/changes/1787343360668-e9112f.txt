@@ -1,6 +1,0 @@
-type=fix
-bump=patch
-breaking=false
-packages=root
-===
-fix: ignore wip commits

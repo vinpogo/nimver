@@ -19,9 +19,8 @@ nimver init
 nimver install-hooks
 ```
 
-`init` creates `.nimver/config.ini` (pre-populated with sensible
-defaults) and a `.nimver/changes/` directory.
-`install-hooks` writes `commit-msg`, `post-commit` and `post-rewrite` hooks into `.git/hooks/` that delegate to this binary. `.nimver/` should be committed to Git.
+`init` creates `.nimver/config.ini`, pre-populated with sensible defaults.
+`install-hooks` writes a `commit-msg` hook into `.git/hooks/` that delegates to this binary, rejecting messages a release would not be able to read. `.nimver/` should be committed to Git.
 
 ## Everyday use
 
@@ -39,8 +38,20 @@ BREAKING CHANGE: describe the break
 When you're ready to cut a release:
 
 ```sh
-nimver bump # updates the manifest + CHANGELOG.md, commits, and tags
+nimver bump           # updates the manifest + CHANGELOG.md, commits, and tags
+nimver bump --dry-run # what it would do, and the changelog entry it would write
 ```
+
+### What counts as pending
+
+`bump` looks back from `HEAD` to the last release of the package it is releasing — the newest commit carrying that package's release tag, or failing that its `version:` release commit, so `--no-tag` releases work too. Every commit in between is a pending change, and its type decides the bump.
+
+Two things follow from reading history rather than a recorded state:
+
+- **CI needs the history and the tags.** Shallow clones do not have them; on GitHub Actions that means `fetch-depth: 0` on `actions/checkout`.
+- **`bump --no-commit --no-tag` leaves no marker behind**, so the next release counts those changes again. That combination means you are taking over from there.
+
+Adopting nimver in a repository that already has a past? Without a release to stop at, the first `bump` counts the whole history. Tag the version you are already on (`git tag v1.4.2`) and it starts from there instead.
 
 ## Supported project manifests
 
@@ -125,6 +136,8 @@ quux = ignore # won't show up in changelog
 
 A breaking change will always be treated as a major bump.
 
+Each commit is read under the configuration *it* was made with, taken from its own tree — so changing a mapping today does not rewrite what last week's commits meant, and a package added mid-cycle cannot claim changes made before it existed.
+
 Any commit type not listed here is rejected by the `commit-msg` hook. Add your own types (and adjust bump levels) as needed.
 
 The default types are:
@@ -154,8 +167,6 @@ nimver install-hooks [--force]
 nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
 nimver version
 
-Invoked by installed hooks (not usually run by hand):
+Invoked by the installed hook (not usually run by hand):
   nimver check-commit-msg <path-to-message-file>
-  nimver record-commit
-  nimver record-rewrite <rebase|amend>
 ```
