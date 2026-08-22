@@ -174,7 +174,14 @@ proc planRelease(
   result.entries = pendingChanges(
       repoRoot, currentConfig, releaseNamingFor(projectWorkspace, package)
     )
-    .filterIt(package.name in it.affectedPackages)
+    .filterIt(
+      package.name in it.affectedPackages or
+      # Before a workspace gains a second package, a lone auto-detected
+      # manifest is named `root` (package.json has no name in its filename).
+      # Accept those historical changes for whichever package now sits at the
+      # repo root so the boundary is not lost on transition.
+      (package.rootDirectory.len == 0 and "root" in it.affectedPackages)
+    )
   result.level = highestBumpLevel(result.entries)
   if not result.isReleasable():
     return

@@ -127,9 +127,17 @@ proc workspaceLayout*(
       )
 
     for manifestName in detectedManifestNames:
-      # A lone manifest keeps the name `root`, which is what release naming
-      # refers to.
-      let packageName = if detectedManifestNames.len == 1: "root" else: manifestName
+      # Derive a stable package name so history attribution survives a
+      # transition from single-package to multi-package. A nimble file
+      # contributes its stem (`cli.nimble` -> `cli`); `package.json` cannot
+      # be named from the filename alone, so it falls back to `root`.
+      let packageName =
+        if detectedManifestNames.len != 1:
+          manifestName
+        elif manifestName.endsWith(".nimble"):
+          manifestName[0 ..< manifestName.len - ".nimble".len]
+        else:
+          "root"
       result.packages.add(
         newWorkspacePackage(
           packageName, manifestName, manifestAt(repoRoot / manifestName)
