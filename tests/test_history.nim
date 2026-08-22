@@ -177,3 +177,109 @@ suite "history":
     let dryRun = pending(dir)
     check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
     check "extra" notin dryRun
+
+  test "flat release tag remains the boundary after the workspace gains a second package":
+    # A single-package repo released as v1.2.3 (flat tag) later grows a second
+    # package. The history scan for the original package must still stop at
+    # v1.2.3 - not walk past it - and commits made in the single-package era
+    # after that tag must be attributed to the surviving package.
+    let dir = TestRepoRoot / "history-workspace-gained-package"
+    removeDir(dir)
+    createDir(dir / "src")
+    discard run("git init -q", dir)
+    discard run("git config user.email test@example.com", dir)
+    discard run("git config user.name Test", dir)
+    writeFile(dir / "cli.nimble", "version = \"1.2.3\"\n")
+    writeFile(dir / "src" / "main.nim", "v1\n")
+    discard run("git add -A", dir)
+    discard run("git commit -q -m \"chore: pre-release history\"", dir)
+    check run("nimver init", dir).code == 0
+    check run("nimver install-hooks", dir).code == 0
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: nimver setup\"", dir)
+    discard run("git tag v1.2.3", dir)
+
+    check commitFile(dir, "src/main.nim", "v2\n", "feat: unreleased change").code == 0
+
+    # Restructure: move cli source to a subdirectory and introduce web.
+    createDir(dir / "cli" / "src")
+    createDir(dir / "web" / "src")
+    writeFile(dir / "cli" / "src" / "main.nim", "v2\n")
+    removeFile(dir / "src" / "main.nim")
+    removeDir(dir / "src")
+    writeFile(dir / "web" / "web.nimble", "version = \"0.0.0\"\n")
+    writeFile(dir / "web" / "src" / "server.nim", "server\n")
+    let configPath1 = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath1,
+      readFile(configPath1) &
+        "\n[workspace]\nstrategy = independent\nsharedChanges = none\n" &
+        "\n[package.cli]\nmanifest = cli.nimble\nsourceFiles = \"cli/**\"\n" &
+        "\n[package.web]\nmanifest = web/web.nimble\nsourceFiles = \"web/**\"\n",
+    )
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: split into workspace\"", dir)
+
+    let dryRun1 = pending(dir)
+    # Version starts from v1.2.3 - the flat tag is recognised as the boundary.
+    check "Bumping cli: 1.2.3 ->" in dryRun1
+    # The post-release single-package-era commit is attributed to cli.
+    check "unreleased change" in dryRun1
+    # The pre-release commit must not resurface.
+    check "pre-release history" notin dryRun1
+
+  test "namespaced release tag remains the boundary after a package is removed":
+    # A two-package workspace released independently. After one package is
+    # removed the surviving package must still stop its history scan at its own
+    # last namespaced tag - not drift back to a flat-era tag or the beginning.
+    let dir = TestRepoRoot / "history-workspace-lost-package"
+    removeDir(dir)
+    createDir(dir / "cli" / "src")
+    createDir(dir / "web" / "src")
+    discard run("git init -q", dir)
+    discard run("git config user.email test@example.com", dir)
+    discard run("git config user.name Test", dir)
+    writeFile(dir / "cli.nimble", "version = \"1.0.0\"\n")
+    writeFile(dir / "cli" / "src" / "main.nim", "v1\n")
+    writeFile(dir / "web" / "web.nimble", "version = \"1.0.0\"\n")
+    writeFile(dir / "web" / "src" / "server.nim", "v1\n")
+    discard run("git add -A", dir)
+    discard run("git commit -q -m \"feat: pre-release feature\"", dir)
+    check run("nimver init", dir).code == 0
+    let configPath2 = dir / ".nimver" / "config.ini"
+    writeFile(
+      configPath2,
+      readFile(configPath2) &
+        "\n[workspace]\nstrategy = independent\nsharedChanges = none\n" &
+        "\n[package.cli]\nmanifest = cli.nimble\nsourceFiles = \"cli/**\"\n" &
+        "\n[package.web]\nmanifest = web/web.nimble\nsourceFiles = \"web/**\"\n",
+    )
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: configure workspace\"", dir)
+    check run("nimver install-hooks", dir).code == 0
+    discard run("git tag cli-v1.0.0", dir)
+    discard run("git tag web-v1.0.0", dir)
+
+    check commitFile(dir, "cli/src/main.nim", "v2\n", "feat: cli-only change").code == 0
+    check commitFile(dir, "web/src/server.nim", "v2\n", "fix: web-only change").code == 0
+
+    # Remove web: delete its files and drop its config section.
+    removeDir(dir / "web")
+    writeFile(
+      configPath2,
+      readFile(configPath2).replace(
+        "\n[package.web]\nmanifest = web/web.nimble\nsourceFiles = \"web/**\"\n", ""
+      ),
+    )
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: remove web\"", dir)
+
+    let dryRun2 = pending(dir)
+    # Version starts from cli-v1.0.0 - the namespaced tag is recognised.
+    check "Bumping version: 1.0.0 ->" in dryRun2
+    # Post-release cli commit is included.
+    check "cli-only change" in dryRun2
+    # Pre-release commit must not resurface.
+    check "pre-release feature" notin dryRun2
+    # Web-only commit is not attributed to cli.
+    check "web-only change" notin dryRun2
