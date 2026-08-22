@@ -1,18 +1,4 @@
-## Reads pending changes out of the history itself.
-##
-## Every commit made since a package was last released is one of its pending
-## changes, and the commit message says what kind: `feat:` is a minor bump,
-## `fix!:` a major one, `chore:` nothing at all. Nothing is recorded anywhere
-## while committing, so nothing can fall out of step with the message - reword
-## a commit, reorder it, squash two together, and the next release simply reads
-## what is there now.
-##
-## Each commit is read under the configuration *it* was made with, taken from
-## its own tree. A package introduced halfway through a release cycle therefore
-## cannot claim changes made before it existed, and retyping `fix = patch` to
-## `fix = minor` today does not rewrite what last week's commits meant.
-
-import std/[options, strutils, tables]
+import std/[options, strutils, tables, options]
 import ./changes
 import ./commitparser
 import ./config
@@ -127,14 +113,14 @@ proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
     # something a release can do anything about.
     return none(ChangeEntry)
 
-  let level = validateAndLookup(snapshot.config, parsed.value)
-  if isFailure(level):
-    # This one *is* worth saying: the message looks like a Conventional Commit,
-    # so a type the config does not map is a mistake rather than prose, and the
-    # change would otherwise go missing from the release without a word.
-    stderr.writeLine("nimver: skipping " & record.hash[0 ..< 8] & ": " & level.error)
+  let maybeLevel = validateAndLookup(snapshot.config, parsed.value)
+  if isNone(maybeLevel):
+    stderr.writeLine(
+      "nimver: skipping " & record.hash[0 ..< 8] & ": unknown commit type '" &
+        parsed.value.commitType & "'"
+    )
     return none(ChangeEntry)
-  if level.value == blIgnore:
+  if maybeLevel.get == blIgnore:
     return none(ChangeEntry)
 
   let affected = affectedPackageNames(snapshot.workspace, record.changedPaths)
@@ -144,7 +130,7 @@ proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
   some(
     ChangeEntry(
       commitType: parsed.value.commitType,
-      bumpLevel: level.value,
+      bumpLevel: maybeLevel.get,
       breaking: parsed.value.breaking,
       affectedPackages: affected,
       message: parsed.value.rawMessage,

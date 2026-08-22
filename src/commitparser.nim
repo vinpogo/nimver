@@ -27,7 +27,9 @@ proc parseHeaderLine(line: string): Result[ParsedHeader] =
   ## Groups: 1 type, 2 "(scope)", 3 scope, 4 "!", 5 subject.
   var groups: array[5, string]
   if not line.match(commitHeaderRegex, groups):
-    return Failure[ParsedHeader]("Header does not match 'type(scope)!: subject'.")
+    return Failure[ParsedHeader](
+      "Header '" & line & "' does not match 'type(scope)!: subject'."
+    )
 
   Success(
     ParsedHeader(

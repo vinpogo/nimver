@@ -1,4 +1,4 @@
-import std/[os, streams, parsecfg, tables, strutils, sequtils, algorithm]
+import std/[os, streams, parsecfg, tables, strutils, sequtils, algorithm, options]
 import ./semver
 import ./commitparser
 import ./result
@@ -173,18 +173,12 @@ proc loadConfig*(repoRoot: string): Config =
     )
   parseConfig(readFile(path), path)
 
-proc lookupLevel(config: Config, commitType: string): Result[BumpLevel] =
+proc lookupLevel(config: Config, commitType: string): Option[BumpLevel] =
   let key = commitType.toLowerAscii()
   if config.types.hasKey(key):
-    Success(config.types[key])
+    some(config.types[key])
   else:
-    Failure[BumpLevel]("Unknown commit type: " & commitType)
+    none[BumpLevel]()
 
-proc validateAndLookup*(config: Config, parsed: ParsedCommit): Result[BumpLevel] =
-  let maybeLevel = lookupLevel(config, parsed.commitType)
-  if isFailure(maybeLevel):
-    let allowed = toSeq(config.types.keys).sorted().join(", ")
-    return Failure[BumpLevel](
-      "unknown commit type '" & parsed.commitType & "'. Allowed types: " & allowed
-    )
-  Success(if parsed.breaking: blMajor else: maybeLevel.value)
+proc validateAndLookup*(config: Config, parsed: ParsedCommit): Option[BumpLevel] =
+  lookupLevel(config, parsed.commitType).mapIt(if parsed.breaking: blMajor else: it)
