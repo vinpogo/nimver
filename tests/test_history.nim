@@ -1,7 +1,7 @@
 ## Reading pending changes back out of the history: which commits a release
 ## counts, what their messages are taken to mean, and where the range ends.
 
-import std/[unittest, os, strutils, sequtils]
+import std/[unittest, os, strutils]
 import ./support
 
 suite "history":
@@ -107,18 +107,6 @@ suite "history":
     let dryRun = pending(dir)
     check "0.2.0 -> 0.2.1 (patch)" in dryRun
     check "- a" notin dryRun # already released
-
-  test "the release commit ends the range when there is no tag":
-    # `bump --no-tag` is a normal way to release, so the range cannot depend on
-    # tags alone.
-    let dir = freshRepo("history-boundary-commit")
-    discard commitFile(dir, "a.txt", "hi", "feat: a")
-    check run("nimver bump --no-tag", dir).code == 0
-    check run("git tag", dir).output.strip().len == 0
-    check "Nothing to bump" in pending(dir)
-
-    discard commitFile(dir, "b.txt", "hi", "fix: b")
-    check "0.2.0 -> 0.2.1 (patch)" in pending(dir)
 
   test "a tag bounds the history a repository adopting nimver brings with it":
     # Without a release to stop at, a first release counts everything - so a

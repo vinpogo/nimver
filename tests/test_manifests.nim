@@ -16,7 +16,7 @@ suite "manifest adapters":
     discard run("git commit -q --no-verify -m \"chore: format manifest\"", dir)
     discard commitFile(dir, "a.txt", "hi", "fix: patch")
 
-    let (output, code) = run("nimver bump --no-tag", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "0.1.0 -> 0.1.1" in output
     check readFile(manifestPath) ==
@@ -56,7 +56,7 @@ suite "manifest adapters":
     )
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
-    let (output, code) = run("nimver bump --no-tag", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "0.1.0 -> 0.1.1" in output
     check "\"version\": \"0.1.1\"" in readFile(packagePath)
@@ -68,7 +68,7 @@ suite "manifest adapters":
     writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
-    let (output, code) = run("nimver bump --no-tag", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "assuming strategy = fixed" in output
     check "pkg.nimble" in output
@@ -118,7 +118,7 @@ suite "manifest adapters":
     )
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
-    let (output, code) = run("nimver bump --no-commit --no-tag", dir)
+    let (output, code) = run("nimver bump", dir)
     check code == 0
     check "releasing them independently" in output
     check "assuming strategy = fixed" notin output

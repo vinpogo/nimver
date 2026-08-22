@@ -8,7 +8,7 @@
 ## the point where a deleted `.nimver/config.ini` can come back. Set
 ## `NIMVER_TEST_DIR` to override the location.
 
-import std/[os, osproc, strtabs, sequtils, strutils]
+import std/[os, osproc, strtabs, strutils]
 
 const ProjectRoot* = currentSourcePath().parentDir().parentDir()
 
