@@ -1,7 +1,7 @@
 ## nimver: semantic versioning for Nim projects, driven by
 ## Conventional Commits and wired into Git via a `commit-msg` hook.
 
-import std/[os, strutils, sequtils, algorithm, tables]
+import std/[os, strutils, sequtils, algorithm, tables, options]
 import ./gitutils
 import ./config
 import ./changes
@@ -21,7 +21,7 @@ nimver - semantic versioning from Conventional Commits
 Usage:
   nimver init
   nimver install-hooks [--force]
-  nimver bump [<package>] [--no-commit] [--no-tag] [--dry-run]
+  nimver bump [<package>] [--dry-run]
   nimver version
 
 See https://github.com/vinpogo/nimver for details.
@@ -101,7 +101,7 @@ proc bumpFixedWorkspace(
     repoRoot: string,
     projectWorkspace: Workspace,
     entries: seq[ChangeEntry],
-    doCommit, doTag, dryRun: bool,
+    dryRun: bool,
 ) =
   let overall = highestBumpLevel(entries)
   if overall == blNone:
@@ -136,19 +136,14 @@ proc bumpFixedWorkspace(
       package.manifest.filePath, " (", package.manifest.displayName(), ")"
   echo "Updated ", changelogPath
 
-  if doCommit:
-    for package in projectWorkspace.packages:
-      gitAdd(repoRoot, package.manifest.filePath)
-    gitAdd(repoRoot, changelogPath)
-    gitCommit(repoRoot, "version: v" & $next)
-    echo "Created release commit."
+  for package in projectWorkspace.packages:
+    gitAdd(repoRoot, package.manifest.filePath)
+  gitAdd(repoRoot, changelogPath)
+  gitCommit(repoRoot, "version: v" & $next)
+  echo "Created release commit."
 
-  if doTag:
-    if not doCommit:
-      reportSkippedTag()
-    else:
-      gitTag(repoRoot, "v" & $next)
-      echo "Created tag v" & $next
+  gitTag(repoRoot, "v" & $next)
+  echo "Created tag v" & $next
 
 type PackageRelease = object
   ## One package's planned release: what it moves to, and the changes that say
@@ -231,7 +226,7 @@ proc bumpIndependentPackages(
     projectWorkspace: Workspace,
     candidates: seq[WorkspacePackage],
     currentConfig: Config,
-    doCommit, doTag, dryRun: bool,
+    dryRun: bool,
 ) =
   ## Releases each of `candidates` that has pending changes, every package to
   ## its own next version, as one commit carrying one tag per package.
@@ -295,31 +290,24 @@ proc bumpIndependentPackages(
     prependToChangelog(changelog.path, changelog.text)
     echo "Updated ", changelog.path
 
-  if doCommit:
-    for release in releases:
-      gitAdd(repoRoot, release.package.manifest.filePath)
-    for changelog in changelogs:
-      gitAdd(repoRoot, changelog.path)
-    gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
-    echo "Created release commit."
+  for release in releases:
+    gitAdd(repoRoot, release.package.manifest.filePath)
+  for changelog in changelogs:
+    gitAdd(repoRoot, changelog.path)
+  gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
+  echo "Created release commit."
 
-  if doTag:
-    if not doCommit:
-      reportSkippedTag()
-    else:
-      for release in releases:
-        gitTag(repoRoot, release.tag)
-        echo "Created tag " & release.tag
+  for release in releases:
+    gitTag(repoRoot, release.tag)
+    echo "Created tag " & release.tag
 
-proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bool) =
-  ## `doCommit`/`doTag` are true by default at the call site; `--no-commit`
-  ## / `--no-tag` on the command line opt out of either one.
+proc cmdBump(repoRoot: string, requestedPackageName: Option[string], dryRun: bool) =
   let config = loadConfig(repoRoot)
   let projectWorkspace = loadWorkspace(repoRoot, config)
 
   case projectWorkspace.strategy
   of wsFixed:
-    if requestedPackageName.len > 0:
+    if requestedPackageName.isSome:
       raise newException(
         IOError,
         "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent.",
@@ -331,18 +319,16 @@ proc cmdBump(repoRoot, requestedPackageName: string, doCommit, doTag, dryRun: bo
     if entries.len == 0:
       echo "No changes since the last release. Nothing to bump."
       return
-    bumpFixedWorkspace(repoRoot, projectWorkspace, entries, doCommit, doTag, dryRun)
+    bumpFixedWorkspace(repoRoot, projectWorkspace, entries, dryRun)
   of wsIndependent:
     # A bare `bump` releases everything that has pending changes; naming a
     # package narrows the release to that one.
     let candidates =
-      if requestedPackageName.len > 0:
-        @[projectWorkspace.findPackage(requestedPackageName)]
+      if requestedPackageName.isSome:
+        @[projectWorkspace.findPackage(requestedPackageName.get)]
       else:
         projectWorkspace.packages
-    bumpIndependentPackages(
-      repoRoot, projectWorkspace, candidates, config, doCommit, doTag, dryRun
-    )
+    bumpIndependentPackages(repoRoot, projectWorkspace, candidates, config, dryRun)
 
 when isMainModule:
   let args = commandLineParams()
@@ -373,20 +359,16 @@ when isMainModule:
         quit(1)
       cmdCheckCommitMsg(repoRoot, args[1])
     of "bump":
-      var requestedPackageName = ""
-      for arg in args[1 .. ^1]:
-        if not arg.startsWith("--"):
-          if requestedPackageName.len > 0:
-            stderr.writeLine("nimver: `bump` takes at most one package name")
-            quit(1)
-          requestedPackageName = arg
-      cmdBump(
-        repoRoot,
-        requestedPackageName,
-        not ("--no-commit" in args),
-        not ("--no-tag" in args),
-        "--dry-run" in args,
-      )
+      let nonFlagArgs = args[1 ..^ 1].filterIt(not it.startsWith("--"))
+      if nonFlagArgs.len > 1:
+        stderr.writeLine("nimver: `bump` takes at most one package name")
+        quit(1)
+      let requestedPackageName =
+        if nonFlagArgs.len > 0:
+          some(nonFlagArgs[0])
+        else:
+          none(string)
+      cmdBump(repoRoot, requestedPackageName, "--dry-run" in args)
     else:
       echo Usage
       quit(1)
