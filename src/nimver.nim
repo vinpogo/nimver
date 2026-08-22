@@ -25,8 +25,15 @@ when isMainModule:
     echo Usage
     quit(1)
 
-  if args[0] in ["version", "--version", "-v"]:
+  let command = args[0]
+  let params = args[1 ..^ 1]
+
+  if command in ["version", "--version", "-v"]:
     cmdVersion()
+    quit(0)
+
+  if ["--help", "-h"].anyIt(it in params):
+    echo Usage
     quit(0)
 
   var repoRoot: string
@@ -37,18 +44,18 @@ when isMainModule:
     quit(1)
 
   try:
-    case args[0]
+    case command
     of "init":
       cmdInit(repoRoot)
     of "install-hooks":
-      cmdInstallHooks(repoRoot, "--force" in args)
+      cmdInstallHooks(repoRoot, "--force" in params)
     of "check-commit-msg":
-      if args.len < 2:
+      if params.len < 1:
         stderr.writeLine("Usage: nimver check-commit-msg <path-to-message-file>")
         quit(1)
-      cmdCheckCommitMsg(repoRoot, args[1])
+      cmdCheckCommitMsg(repoRoot, params[0])
     of "bump":
-      let nonFlagArgs = args[1 ..^ 1].filterIt(not it.startsWith("--"))
+      let nonFlagArgs = params.filterIt(not it.startsWith("--"))
       if nonFlagArgs.len > 1:
         stderr.writeLine("nimver: `bump` takes at most one package name")
         quit(1)
@@ -57,7 +64,7 @@ when isMainModule:
           some(nonFlagArgs[0])
         else:
           none(string)
-      cmdBump(repoRoot, requestedPackageName, "--dry-run" in args)
+      cmdBump(repoRoot, requestedPackageName, "--dry-run" in params)
     else:
       echo Usage
       quit(1)
