@@ -92,11 +92,6 @@ proc releaseLabelFor(projectWorkspace: Workspace, package: WorkspacePackage): st
   ## several exist, otherwise the same wording as a fixed release.
   if projectWorkspace.hasSeveralPackages(): package.name else: "version"
 
-proc reportSkippedTag() =
-  # Without a release commit, HEAD is still whatever it was before this run -
-  # tagging it would mislabel an unrelated commit.
-  echo "Skipped tag: no release commit was created (pass --no-tag along with --no-commit)."
-
 proc bumpFixedWorkspace(
     repoRoot: string,
     projectWorkspace: Workspace,

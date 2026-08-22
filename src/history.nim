@@ -48,20 +48,6 @@ proc isReleaseTag(naming: ReleaseNaming, tagName: string): bool =
   tagName.len > naming.tagPrefix.len and tagName.startsWith(naming.tagPrefix) and
     tagName[naming.tagPrefix.len].isDigit()
 
-proc isReleaseCommit(naming: ReleaseNaming, subject: string): bool =
-  ## Recognises the release commits `bump` writes: `version: v1.2.0` for a
-  ## single version, `version(web): v1.2.0` for one package of several, and
-  ## `version: web-v1.2.0, cli-v0.4.0` when several go out at once.
-  ##
-  ## A release commit is the fallback boundary for `bump --no-tag`, which
-  ## leaves no tag to find.
-  if not subject.startsWith("version"):
-    return false
-  if naming.packageName.len == 0:
-    return true
-  subject.startsWith("version(" & naming.packageName & ")") or
-    naming.tagPrefix in subject
-
 proc endsTheRange(
     naming: ReleaseNaming,
     record: CommitRecord,
@@ -70,7 +56,6 @@ proc endsTheRange(
   for tagName in tagsByCommit.getOrDefault(record.hash):
     if naming.isReleaseTag(tagName):
       return true
-  naming.isReleaseCommit(record.message.splitLines()[0])
 
 proc snapshotAt(repoRoot, revision: string, currentConfig: Config): Snapshot =
   ## How the repository stood at a commit, read from that commit's own tree.

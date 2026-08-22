@@ -33,7 +33,7 @@ suite "workspace strategies":
     discard run("git commit -q --no-verify -m \"chore: diverge package versions\"", dir)
     discard commitFile(dir, "packages/web/index.js", "export {}\n", "fix: patch web")
 
-    let (output, code) = run("nimver bump --no-commit --no-tag", dir)
+    let (output, code) = run("nimver bump", dir)
     check code != 0
     check "Fixed workspace manifests must have the same version" in output
     check "\"version\": \"0.1.0\"" in readFile(
