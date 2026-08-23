@@ -27,7 +27,7 @@ type
   Snapshot = object
     ## How the repository was set up at some commit: what the types map to, and
     ## which packages a changed file can belong to.
-    config: Config
+    config: NimverConfig
     workspace: Workspace
 
 proc newReleaseNaming*(packageName: string, namespaced: bool): ReleaseNaming =
@@ -64,7 +64,7 @@ proc endsTheRange(
     if naming.isReleaseTag(tagName):
       return true
 
-proc snapshotAt(repoRoot, revision: string, currentConfig: Config): Snapshot =
+proc snapshotAt(repoRoot, revision: string, currentConfig: NimverConfig): Snapshot =
   ## How the repository stood at a commit, read from that commit's own tree.
   ##
   ## Commits made before nimver was set up - or carrying a config that no
@@ -138,7 +138,7 @@ proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
   )
 
 proc pendingChanges*(
-    repoRoot: string, currentConfig: Config, naming: ReleaseNaming
+    repoRoot: string, currentConfig: NimverConfig, naming: ReleaseNaming
 ): seq[ChangeEntry] =
   ## Every change since the last release of the package `naming` describes,
   ## oldest first - the order a changelog section reads in.

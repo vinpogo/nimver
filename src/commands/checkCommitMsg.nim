@@ -15,7 +15,7 @@ proc cmdCheckCommitMsg*(repoRoot: string, msgFilePath: string) =
     stderr.writeLine("nimver: invalid commit message: " & parseResult.error)
     quit(1)
 
-  let cfg = loadConfig(repoRoot)
+  let cfg = loadUserConfig(repoRoot)
   let maybeLevel = validateAndLookup(cfg, parseResult.value)
   if isNone(maybeLevel):
     stderr.writeLine(

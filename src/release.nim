@@ -89,7 +89,7 @@ proc isReleasable*(release: PackageRelease): bool =
 proc planRelease*(
     repoRoot: string,
     projectWorkspace: Workspace,
-    currentConfig: Config,
+    currentConfig: NimverConfig,
     package: WorkspacePackage,
 ): PackageRelease =
   ## Every package reads its own stretch of history, ending at its own last

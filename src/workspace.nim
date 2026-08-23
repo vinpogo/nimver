@@ -1,14 +1,4 @@
-## Resolves configured packages and attributes changed files to them.
-##
-## A changed file belongs to the package whose manifest is its nearest
-## ancestor: the longest matching package directory wins. A package may narrow
-## that with explicit `sourceFiles` patterns, which take precedence.
-##
-## Packages sharing a directory tie for nearest ancestor, so a file in it
-## belongs to no single package and follows the `sharedChanges` policy instead.
-## `sourceFiles` is what tells such siblings' sources apart.
-
-import std/[os, sets, strutils, tables]
+import std/[os, sets, strutils, tables, options]
 import ./changes
 import ./config
 import ./adapters/manifest
@@ -20,7 +10,7 @@ type
     manifestRelativePath*: string
     rootDirectory*: string
       ## Repo-relative directory holding the manifest; empty at the repo root.
-    sourceFilePatterns*: seq[string]
+    sourceFilePatterns*: Option[seq[string]]
       ## Optional globs. When empty, the package claims files by nearest
       ## ancestor instead.
 
@@ -46,7 +36,7 @@ proc manifestRootDirectory(manifestRelativePath: string): string =
 proc newWorkspacePackage(
     name, manifestRelativePath: string,
     manifest: ProjectManifest,
-    sourceFilePatterns: seq[string] = @[],
+    sourceFilePatterns: Option[seq[string]] = none[seq[string]](),
 ): WorkspacePackage =
   WorkspacePackage(
     name: name,
@@ -103,7 +93,10 @@ proc packageNames*(workspace: Workspace): seq[string] =
     result.add(package.name)
 
 proc workspaceLayout*(
-    repoRoot: string, config: Config, detectedManifestNames: seq[string], quiet = false
+    repoRoot: string,
+    config: NimverConfig,
+    detectedManifestNames: seq[string],
+    quiet = false,
 ): Workspace =
   ## The packages a configuration describes, and how changed files map onto
   ## them. `detectedManifestNames` supplies the repository root's manifests for
@@ -176,7 +169,7 @@ proc workspaceLayout*(
       )
     )
 
-proc loadWorkspace*(repoRoot: string, config: Config): Workspace =
+proc loadWorkspace*(repoRoot: string, config: NimverConfig): Workspace =
   ## The workspace as the working tree has it, which is the one a release acts
   ## on: every manifest it names has to be there to be read and rewritten.
   var detectedManifestNames: seq[string] = @[]
@@ -228,10 +221,11 @@ proc owningPackageIndex(workspace: Workspace, changedPath: string): int =
   ## ancestor. Returns -1 for a file no package claims.
   var matchingPackageIndexes: seq[int] = @[]
   for packageIndex, package in workspace.packages:
-    for sourceFilePattern in package.sourceFilePatterns:
-      if globMatches(sourceFilePattern, changedPath):
-        matchingPackageIndexes.add(packageIndex)
-        break
+    if package.sourceFilePatterns.isSome:
+      for sourceFilePattern in package.sourceFilePatterns.get:
+        if globMatches(sourceFilePattern, changedPath):
+          matchingPackageIndexes.add(packageIndex)
+          break
 
   if matchingPackageIndexes.len > 1:
     var matchingPackageNames: seq[string] = @[]
