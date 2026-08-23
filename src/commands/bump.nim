@@ -61,7 +61,7 @@ proc bumpIndependentPackages(
     repoRoot: string,
     projectWorkspace: Workspace,
     candidates: seq[WorkspacePackage],
-    currentConfig: Config,
+    currentConfig: NimverConfig,
     dryRun: bool,
 ) =
   ## Releases each of `candidates` that has pending changes, every package to
@@ -138,7 +138,7 @@ proc bumpIndependentPackages(
     echo "Created tag " & release.tag
 
 proc cmdBump*(repoRoot: string, requestedPackageName: Option[string], dryRun: bool) =
-  let config = loadConfig(repoRoot)
+  let config = loadUserConfig(repoRoot)
   let projectWorkspace = loadWorkspace(repoRoot, config)
 
   case projectWorkspace.strategy
