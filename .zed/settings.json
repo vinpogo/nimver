@@ -19,6 +19,12 @@
       },
     },
     "nim": {
+      "settings": {
+        "maxNimsuggestProcesses": 2,
+        "timeout": 30000,
+        "notificationVerbosity": "error",
+        "executable": "~/.local/share/mise/installs/nim/2.2.10/bin/nimsuggest"
+      },
       "binary": {
         "path": "~/.local/share/mise/shims/nimlangserver",
       },
