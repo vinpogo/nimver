@@ -1,5 +1,6 @@
 import std/[os, strutils, sequtils, options]
 import ./gitutils
+import ./result
 import ./commands/init
 import ./commands/version
 import ./commands/installHooks
@@ -53,7 +54,10 @@ when isMainModule:
       if params.len < 1:
         stderr.writeLine("Usage: nimver check-commit-msg <path-to-message-file>")
         quit(1)
-      cmdCheckCommitMsg(repoRoot, params[0])
+      let checkResult = cmdCheckCommitMsg(repoRoot, params[0])
+      if isFailure(checkResult):
+        stderr.writeLine(checkResult.error)
+        quit(1)
     of "bump":
       let nonFlagArgs = params.filterIt(not it.startsWith("--"))
       if nonFlagArgs.len > 1:
