@@ -74,6 +74,8 @@ func parseWorkspaceStrategy(value: string): WorkspaceStrategy =
     wsFixed
   of "independent":
     wsIndependent
+  of "":
+    wsIndependent
   else:
     raise newException(ValueError, "Invalid workspace strategy: " & value)
 
@@ -126,13 +128,13 @@ proc parsePackages(userConfig: parsecfg.Config): seq[PackageConfig] =
 proc parseConfig*(contents, path: string): NimverConfig =
   let userConfig = loadConfig(newStringStream(contents), path)
   checkForUnquotedGlobs(userConfig, path)
-  let strategyRaw = userConfig.getSectionValue("workspace", "strategy")
+  let workspaceStrategyRaw = userConfig.getSectionValue("workspace", "strategy")
+  let sharedChangesRaw = userConfig.getSectionValue("workspace", "sharedChanges", "all")
   let config = NimverConfig(
     types: parseTypes(userConfig),
-    workspaceStrategy: parseWorkspaceStrategy(strategyRaw),
-    strategyWasSpecified: strategyRaw != "",
-    sharedChanges:
-      parseSharedChangesKind(userConfig.getSectionValue("workspace", "sharedChanges")),
+    workspaceStrategy: parseWorkspaceStrategy(workspaceStrategyRaw),
+    strategyWasSpecified: workspaceStrategyRaw != "",
+    sharedChanges: parseSharedChangesKind(sharedChangesRaw),
     packages: parsePackages(userConfig),
   )
   validateWorkspaceConfig(config, path)
