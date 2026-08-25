@@ -46,7 +46,7 @@ proc newWorkspacePackage(
     sourceFilePatterns: sourceFilePatterns,
   )
 
-proc globMatches(pattern, path: string): bool =
+proc globMatches*(pattern, path: string): bool =
   ## `*` stops at a path separator, `**` crosses them, `?` matches one
   ## non-separator character.
   let normalizedPattern = normalizeRepoPath(pattern)
