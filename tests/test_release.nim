@@ -10,19 +10,10 @@ import config
 import changes
 import semver
 import adapters/manifest
-
-proc package(name: string): WorkspacePackage =
-  WorkspacePackage(
-    name: name,
-    manifest: manifestAt(name & ".nimble"),
-    manifestRelativePath: name & ".nimble",
-    rootDirectory: "",
-  )
+import ./builders
 
 proc workspaceOf(packageNames: seq[string], strategy = wsIndependent): Workspace =
-  Workspace(
-    strategy: strategy, sharedChanges: scAll, packages: packageNames.mapIt(package(it))
-  )
+  testWorkspace(packageNames.mapIt(testPackage(it, it & ".nimble")), strategy)
 
 proc entry(level: BumpLevel, breaking = false): ChangeEntry =
   ChangeEntry(

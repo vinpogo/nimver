@@ -1,28 +1,7 @@
-import std/[unittest, options, strutils]
+import std/[unittest, options]
 import workspace
 import config
-import adapters/manifest
-
-proc rootDirectoryOf(manifestRelativePath: string): string =
-  let lastSeparatorIndex = manifestRelativePath.rfind('/')
-  if lastSeparatorIndex == -1:
-    ""
-  else:
-    manifestRelativePath[0 ..< lastSeparatorIndex]
-
-proc package(
-    name, manifestRelativePath: string, sourceFiles = none[seq[string]]()
-): WorkspacePackage =
-  WorkspacePackage(
-    name: name,
-    manifest: manifestAt(manifestRelativePath),
-    manifestRelativePath: manifestRelativePath,
-    rootDirectory: rootDirectoryOf(manifestRelativePath),
-    sourceFilePatterns: sourceFiles,
-  )
-
-proc workspaceOf(packages: seq[WorkspacePackage], sharedChanges = scAll): Workspace =
-  Workspace(strategy: wsIndependent, sharedChanges: sharedChanges, packages: packages)
+import ./builders
 
 suite "glob matching":
   test "a pattern without wildcards has to match exactly":
@@ -61,127 +40,134 @@ suite "glob matching":
 
 suite "attributing a changed file":
   let packages = @[
-    package("web", "packages/web/package.json"),
-    package("cli", "packages/cli/cli.nimble"),
+    testPackage("web", "packages/web/package.json"),
+    testPackage("cli", "packages/cli/cli.nimble"),
   ]
 
   test "a file inside a package belongs to it alone":
-    check workspaceOf(packages).affectedPackageNames(@["packages/web/index.js"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]) ==
       @["web"]
 
   test "a package's own manifest belongs to it":
-    check workspaceOf(packages).affectedPackageNames(@["packages/cli/cli.nimble"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/cli/cli.nimble"]) ==
       @["cli"]
 
   test "one commit can touch several packages":
-    check workspaceOf(packages).affectedPackageNames(
+    check testWorkspace(packages).affectedPackageNames(
       @["packages/web/index.js", "packages/cli/src/main.nim"]
     ) == @["web", "cli"]
 
   test "packages are reported in workspace order, not in the order touched":
-    check workspaceOf(packages).affectedPackageNames(
+    check testWorkspace(packages).affectedPackageNames(
       @["packages/cli/src/main.nim", "packages/web/index.js"]
     ) == @["web", "cli"]
 
   test "a package touched twice is reported once":
-    check workspaceOf(packages).affectedPackageNames(
+    check testWorkspace(packages).affectedPackageNames(
       @["packages/web/index.js", "packages/web/README.md"]
     ) == @["web"]
 
   test "no changed files affect nothing":
-    check workspaceOf(packages).affectedPackageNames(@[]).len == 0
+    check testWorkspace(packages).affectedPackageNames(@[]).len == 0
 
 suite "files no package claims":
   let packages = @[
-    package("web", "packages/web/package.json"),
-    package("cli", "packages/cli/cli.nimble"),
+    testPackage("web", "packages/web/package.json"),
+    testPackage("cli", "packages/cli/cli.nimble"),
   ]
 
   test "sharedChanges = all hands the file to every package":
-    check workspaceOf(packages).affectedPackageNames(@["README.md"]) == @["web", "cli"]
+    check testWorkspace(packages).affectedPackageNames(@["README.md"]) == @[
+      "web", "cli"
+    ]
 
   test "sharedChanges = none drops the file":
-    check workspaceOf(packages, sharedChanges = scNone)
+    check testWorkspace(packages, sharedChanges = scNone)
       .affectedPackageNames(@["README.md"]).len == 0
 
   test "the old per-change bookkeeping directory is skipped rather than shared":
-    check workspaceOf(packages)
+    check testWorkspace(packages)
       .affectedPackageNames(@[".nimver/changes/abc123.txt"]).len == 0
 
   test "the config itself is a shared change":
-    check workspaceOf(packages).affectedPackageNames(@[".nimver/config.ini"]) ==
+    check testWorkspace(packages).affectedPackageNames(@[".nimver/config.ini"]) ==
       @["web", "cli"]
 
   test "packages sharing a directory tie for nearest, so sharedChanges decides":
-    let siblings = @[package("web", "package.json"), package("cli", "cli.nimble")]
-    check siblings.workspaceOf().affectedPackageNames(@["src/main.nim"]) ==
+    let siblings =
+      @[testPackage("web", "package.json"), testPackage("cli", "cli.nimble")]
+    check siblings.testWorkspace().affectedPackageNames(@["src/main.nim"]) ==
       @["web", "cli"]
     check siblings
-      .workspaceOf(sharedChanges = scNone)
+      .testWorkspace(sharedChanges = scNone)
       .affectedPackageNames(@["src/main.nim"]).len == 0
 
   test "a sibling's own manifest still belongs to it":
-    let siblings = @[package("web", "package.json"), package("cli", "cli.nimble")]
-    check siblings.workspaceOf().affectedPackageNames(@["cli.nimble"]) == @["cli"]
+    let siblings =
+      @[testPackage("web", "package.json"), testPackage("cli", "cli.nimble")]
+    check siblings.testWorkspace().affectedPackageNames(@["cli.nimble"]) == @["cli"]
 
 suite "nested packages":
-  let packages =
-    @[package("root", "root.nimble"), package("web", "packages/web/package.json")]
+  let packages = @[
+    testPackage("root", "root.nimble"), testPackage("web", "packages/web/package.json")
+  ]
 
   test "the nearest manifest wins over an ancestor's":
-    check workspaceOf(packages).affectedPackageNames(@["packages/web/index.js"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]) ==
       @["web"]
 
   test "a file outside every nested package falls to the ancestor":
-    check workspaceOf(packages, sharedChanges = scNone).affectedPackageNames(
+    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
       @["src/main.nim"]
     ) == @["root"]
 
   test "a package at the repo root claims files no nested package holds":
-    check workspaceOf(packages, sharedChanges = scNone).affectedPackageNames(
+    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
       @["README.md"]
     ) == @["root"]
 
 suite "explicit sourceFiles":
   test "a pattern claims a file outside the package's own directory":
     let packages = @[
-      package("web", "packages/web/package.json", some(@["packages/web/**", "docs/**"])),
-      package("cli", "packages/cli/cli.nimble"),
+      testPackage(
+        "web", "packages/web/package.json", some(@["packages/web/**", "docs/**"])
+      ),
+      testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check workspaceOf(packages, sharedChanges = scNone).affectedPackageNames(
+    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
       @["docs/guide.md"]
     ) == @["web"]
 
   test "a pattern wins over another package's nearest-ancestor claim":
     let packages = @[
-      package("web", "packages/web/package.json", some(@["packages/**"])),
-      package("cli", "packages/cli/cli.nimble"),
+      testPackage("web", "packages/web/package.json", some(@["packages/**"])),
+      testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check workspaceOf(packages).affectedPackageNames(@["packages/cli/src/main.nim"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/cli/src/main.nim"]) ==
       @["web"]
 
   test "a file matching no pattern still falls back to nearest ancestor":
     let packages = @[
-      package("web", "packages/web/package.json", some(@["docs/**"])),
-      package("cli", "packages/cli/cli.nimble"),
+      testPackage("web", "packages/web/package.json", some(@["docs/**"])),
+      testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check workspaceOf(packages, sharedChanges = scNone).affectedPackageNames(
+    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
       @["packages/web/index.js"]
     ) == @["web"]
 
   test "overlapping patterns are rejected rather than picking a winner":
     let packages = @[
-      package("web", "packages/web/package.json", some(@["shared/**"])),
-      package("cli", "packages/cli/cli.nimble", some(@["shared/**"])),
+      testPackage("web", "packages/web/package.json", some(@["shared/**"])),
+      testPackage("cli", "packages/cli/cli.nimble", some(@["shared/**"])),
     ]
     expect IOError:
-      discard workspaceOf(packages).affectedPackageNames(@["shared/util.js"])
+      discard testWorkspace(packages).affectedPackageNames(@["shared/util.js"])
 
 suite "looking up a package":
-  let projectWorkspace = workspaceOf(
+  let projectWorkspace = testWorkspace(
     @[
-      package("web", "packages/web/package.json"),
-      package("cli", "packages/cli/cli.nimble"),
+      testPackage("web", "packages/web/package.json"),
+      testPackage("cli", "packages/cli/cli.nimble"),
     ]
   )
 

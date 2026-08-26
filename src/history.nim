@@ -1,4 +1,4 @@
-import std/[options, strutils, tables, options]
+import std/[algorithm, options, strutils, tables]
 import ./changes
 import ./commitparser
 import ./config
@@ -24,11 +24,14 @@ type
       ##   found after the workspace drops back to a single package.
       ## Empty when no shape change has occurred.
 
-  Snapshot = object
+  Snapshot* = object
     ## How the repository was set up at some commit: what the types map to, and
     ## which packages a changed file can belong to.
     config: NimverConfig
     workspace: Workspace
+
+proc newSnapshot*(config: NimverConfig, workspace: Workspace): Snapshot =
+  Snapshot(config: config, workspace: workspace)
 
 proc newReleaseNaming*(packageName: string, namespaced: bool): ReleaseNaming =
   if namespaced:
@@ -102,7 +105,7 @@ proc changesTheSetup(snapshot: Snapshot, record: CommitRecord): bool =
       return true
   false
 
-proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
+proc changeFor*(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
   ## The change a commit stands for, or nothing when it is not one: an
   ## `ignore`d type, a message that is not a Conventional Commit, or a commit
   ## touching no package's files.
@@ -137,6 +140,17 @@ proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
     )
   )
 
+proc commitsSinceLastRelease(
+    repoRoot: string, naming: ReleaseNaming
+): seq[CommitRecord] =
+  ## Newest first, stopping before the commit a release of this package went
+  ## out with.
+  let tagsByCommit = gitTagsByCommit(repoRoot)
+  for record in gitCommitsIn(repoRoot, "HEAD"):
+    if naming.endsTheRange(record, tagsByCommit):
+      break
+    result.add(record)
+
 proc pendingChanges*(
     repoRoot: string, currentConfig: NimverConfig, naming: ReleaseNaming
 ): seq[ChangeEntry] =
@@ -153,25 +167,17 @@ proc pendingChanges*(
   ## commit that introduced `.nimver/config.ini` reads well until a rebase
   ## reorders that commit past its neighbours, at which point the changes
   ## behind it disappear from the release without a word.
-  let tagsByCommit = gitTagsByCommit(repoRoot)
-
-  var changes: seq[ChangeEntry] = @[]
+  var newestFirst: seq[ChangeEntry] = @[]
   var snapshot: Snapshot
   # Walking backwards, the setup only needs re-reading once a commit that
   # changed it has been passed.
   var snapshotIsStale = true
-  for record in gitCommitsIn(repoRoot, "HEAD"):
-    if naming.endsTheRange(record, tagsByCommit):
-      break
+  for record in commitsSinceLastRelease(repoRoot, naming):
     if snapshotIsStale:
       snapshot = snapshotAt(repoRoot, record.hash, currentConfig)
-      snapshotIsStale = false
-
     let change = snapshot.changeFor(record)
     if change.isSome():
-      changes.add(change.get())
+      newestFirst.add(change.get())
     snapshotIsStale = snapshot.changesTheSetup(record)
 
-  # Read newest first, released oldest first.
-  for index in countdown(changes.high, 0):
-    result.add(changes[index])
+  newestFirst.reversed()
