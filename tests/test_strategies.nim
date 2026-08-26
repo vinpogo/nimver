@@ -26,6 +26,11 @@ suite "workspace strategies":
     check "packages/web/package.json" in changedFiles
     check "packages/cli/cli.nimble" in changedFiles
 
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: v0.2.0"
+    let (tags, _) = run("git tag", dir)
+    check tags.strip() == "v0.2.0"
+
   test "fixed workspace bump rejects divergent manifest versions":
     let dir = freshWorkspaceRepo("workspace-divergent")
     writeFile(dir / "packages" / "cli" / "cli.nimble", "version = \"0.2.0\"\n")

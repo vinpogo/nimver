@@ -7,11 +7,17 @@ import semver
 import workspace
 import history
 
+const ChangelogName = "CHANGELOG.md"
+
 type PackageRelease* = object
-  ## One package's planned release: what it moves to, and the changes that say
-  ## so. Planning every package before writing anything keeps a release of
-  ## several packages a single commit.
-  package*: WorkspacePackage
+  ## One planned release: what it moves to, the changes that say so, and every
+  ## manifest that carries the new version. Planning every release before
+  ## writing anything keeps a release of several packages a single commit.
+  name*: string
+    ## The package being released, empty when the release covers the repository
+    ## as a whole.
+  manifests*: seq[ProjectManifest]
+    ## Plural because a fixed workspace moves every manifest to one version.
   entries*: seq[ChangeEntry]
   current*, next*: SemVer
   level*: BumpLevel
@@ -27,25 +33,39 @@ type ChangelogWrite* = object
   path*: string
   text*: string
 
-func hasSeveralPackages(projectWorkspace: Workspace): bool =
-  projectWorkspace.packages.len > 1
-
-func releaseNamingFor(
-    projectWorkspace: Workspace, package: WorkspacePackage
-): ReleaseNaming =
-  newReleaseNaming(package.name, projectWorkspace.hasSeveralPackages())
+func releasesPackagesApart(projectWorkspace: Workspace): bool =
+  ## Only then does a release have to name its package - in its tag, in the
+  ## commit subject, and in the progress line.
+  projectWorkspace.strategy == wsIndependent and projectWorkspace.packages.len > 1
 
 func highestBumpLevel*(entries: seq[ChangeEntry]): BumpLevel =
   entries.foldl(if b.bumpLevel > a: b.bumpLevel else: a, blNone)
+
+func hasPendingChanges*(release: PackageRelease): bool =
+  release.entries.len > 0
+
+func isReleasable*(release: PackageRelease): bool =
+  release.hasPendingChanges() and release.level != blNone
+
+func releaseLabelFor*(projectWorkspace: Workspace, release: PackageRelease): string =
+  if projectWorkspace.releasesPackagesApart(): release.name else: "version"
+
+func releaseTagFor(
+    projectWorkspace: Workspace, packageName: string, version: SemVer
+): string =
+  if projectWorkspace.releasesPackagesApart():
+    packageName & "-v" & $version
+  else:
+    "v" & $version
 
 proc changelogPathFor(repoRoot: string, package: WorkspacePackage): string =
   ## An independently versioned package keeps its changelog next to its
   ## manifest, since its version moves on its own schedule. Sibling manifests
   ## resolve to the same path and therefore share one changelog.
   if package.rootDirectory.len == 0:
-    repoRoot / "CHANGELOG.md"
+    repoRoot / ChangelogName
   else:
-    repoRoot / package.rootDirectory / "CHANGELOG.md"
+    repoRoot / package.rootDirectory / ChangelogName
 
 proc changelogPackageLabelFor(
     repoRoot: string, projectWorkspace: Workspace, package: WorkspacePackage
@@ -59,33 +79,6 @@ proc changelogPackageLabelFor(
       return package.name
   ""
 
-proc releaseTagFor(
-    projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
-): string =
-  if projectWorkspace.hasSeveralPackages():
-    package.name & "-v" & $version
-  else:
-    "v" & $version
-
-proc releaseCommitSubjectFor(
-    projectWorkspace: Workspace, package: WorkspacePackage, version: SemVer
-): string =
-  if projectWorkspace.hasSeveralPackages():
-    "version(" & package.name & "): v" & $version
-  else:
-    "version: v" & $version
-
-proc releaseLabelFor*(projectWorkspace: Workspace, package: WorkspacePackage): string =
-  ## What the release is called in progress output: the package name when
-  ## several exist, otherwise the same wording as a fixed release.
-  if projectWorkspace.hasSeveralPackages(): package.name else: "version"
-
-proc hasPendingChanges*(release: PackageRelease): bool =
-  release.entries.len > 0
-
-proc isReleasable*(release: PackageRelease): bool =
-  release.hasPendingChanges() and release.level != blNone
-
 proc planRelease*(
     repoRoot: string,
     projectWorkspace: Workspace,
@@ -96,9 +89,12 @@ proc planRelease*(
   ## release. A change touching two packages is therefore counted once for
   ## each, however far apart the two last went out - which is the whole point
   ## of releasing them independently.
-  result.package = package
+  result.name = package.name
+  result.manifests = @[package.manifest]
   result.entries = pendingChanges(
-      repoRoot, currentConfig, releaseNamingFor(projectWorkspace, package)
+      repoRoot,
+      currentConfig,
+      newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart()),
     )
     .filterIt(
       package.name in it.affectedPackages or
@@ -120,7 +116,50 @@ proc planRelease*(
     changelogPackageLabelFor(repoRoot, projectWorkspace, package),
   )
   result.changelogPath = changelogPathFor(repoRoot, package)
-  result.tag = releaseTagFor(projectWorkspace, package, result.next)
+  result.tag = releaseTagFor(projectWorkspace, package.name, result.next)
+
+proc fixedReleaseNaming(projectWorkspace: Workspace): ReleaseNaming =
+  ## One version for the whole repository, so one stretch of history behind it.
+  ## A lone package's name is still worth knowing: the namespaced tags it wrote
+  ## while the workspace had siblings end the range too.
+  let survivingName =
+    if projectWorkspace.packages.len == 1:
+      projectWorkspace.packages[0].name
+    else:
+      ""
+  newReleaseNaming(survivingName, namespaced = false)
+
+proc sharedCurrentVersion(packages: seq[WorkspacePackage]): SemVer =
+  ## The one version a fixed workspace is on. Manifests that disagree have to be
+  ## reconciled by hand: picking one of them would silently move the others.
+  result = readVersion(packages[0].manifest)
+  for package in packages[1 .. ^1]:
+    let packageVersion = readVersion(package.manifest)
+    if packageVersion != result:
+      raise newException(
+        IOError,
+        "Fixed workspace manifests must have the same version: package '" &
+          packages[0].name & "' is " & $result & ", package '" & package.name & "' is " &
+          $packageVersion,
+      )
+
+proc planFixedRelease*(
+    repoRoot: string, projectWorkspace: Workspace, currentConfig: NimverConfig
+): PackageRelease =
+  ## The whole repository moving at once: one version across every manifest, one
+  ## changelog section at the repository root, one tag.
+  result.manifests = projectWorkspace.packages.mapIt(it.manifest)
+  result.entries =
+    pendingChanges(repoRoot, currentConfig, fixedReleaseNaming(projectWorkspace))
+  result.level = highestBumpLevel(result.entries)
+  if not result.isReleasable():
+    return
+
+  result.current = sharedCurrentVersion(projectWorkspace.packages)
+  result.next = bump(result.current, result.level)
+  result.section = buildSection(result.next, result.entries)
+  result.changelogPath = repoRoot / ChangelogName
+  result.tag = releaseTagFor(projectWorkspace, result.name, result.next)
 
 proc changelogWrites*(releases: seq[PackageRelease]): seq[ChangelogWrite] =
   var writeIndexByPath = initTable[string, int]()
@@ -136,7 +175,9 @@ proc releaseCommitSubject*(
 ): string =
   ## Releasing several independently versioned packages has no single version
   ## to name, so the subject lists the tags the commit is about to carry.
-  if releases.len == 1:
-    releaseCommitSubjectFor(projectWorkspace, releases[0].package, releases[0].next)
-  else:
+  if releases.len != 1:
     "version: " & releases.mapIt(it.tag).join(", ")
+  elif projectWorkspace.releasesPackagesApart():
+    "version(" & releases[0].name & "): v" & $releases[0].next
+  else:
+    "version: v" & $releases[0].next

@@ -1,9 +1,9 @@
 ## Unit tests for the decisions a release plan makes without touching a
 ## repository: which level a set of changes adds up to, whether there is
 ## anything to release, how changelog writes are folded together, and what the
-## release commit is called.
+## release names itself.
 
-import std/[unittest, strutils]
+import std/[unittest, strutils, sequtils]
 import release
 import workspace
 import config
@@ -11,16 +11,18 @@ import changes
 import semver
 import adapters/manifest
 
-proc package(name, manifestRelativePath: string): WorkspacePackage =
+proc package(name: string): WorkspacePackage =
   WorkspacePackage(
     name: name,
-    manifest: manifestAt(manifestRelativePath),
-    manifestRelativePath: manifestRelativePath,
+    manifest: manifestAt(name & ".nimble"),
+    manifestRelativePath: name & ".nimble",
     rootDirectory: "",
   )
 
-proc workspaceOf(packages: seq[WorkspacePackage]): Workspace =
-  Workspace(strategy: wsIndependent, sharedChanges: scAll, packages: packages)
+proc workspaceOf(packageNames: seq[string], strategy = wsIndependent): Workspace =
+  Workspace(
+    strategy: strategy, sharedChanges: scAll, packages: packageNames.mapIt(package(it))
+  )
 
 proc entry(level: BumpLevel, breaking = false): ChangeEntry =
   ChangeEntry(
@@ -35,7 +37,8 @@ proc release(
     entries = @[entry(blMinor)],
 ): PackageRelease =
   PackageRelease(
-    package: package(name, name & ".nimble"),
+    name: name,
+    manifests: @[manifestAt(name & ".nimble")],
     entries: entries,
     current: parseSemVer("0.1.0"),
     next: parseSemVer(next),
@@ -117,16 +120,13 @@ suite "folding changelog writes":
   test "nothing to release writes nothing":
     check changelogWrites(@[]).len == 0
 
-suite "naming the release":
-  let single = workspaceOf(@[package("cli", "cli.nimble")])
-  let several =
-    workspaceOf(@[package("web", "package.json"), package("cli", "cli.nimble")])
+suite "naming a release of one package among several":
+  let several = workspaceOf(@["web", "cli"])
 
-  test "a lone package is just the version":
-    check single.releaseCommitSubject(@[release("cli", "1.0.0", blMajor)]) ==
-      "version: v1.0.0"
+  test "the progress line names the package":
+    check several.releaseLabelFor(release("web", "0.2.0", blMinor)) == "web"
 
-  test "one package out of several names itself":
+  test "the commit subject scopes itself to the package":
     check several.releaseCommitSubject(@[release("web", "0.2.0", blMinor)]) ==
       "version(web): v0.2.0"
 
@@ -135,6 +135,18 @@ suite "naming the release":
       @[release("web", "0.2.0", blMinor), release("cli", "0.1.1", blPatch)]
     ) == "version: web-v0.2.0, cli-v0.1.1"
 
-  test "progress output names the package only when there are several":
-    check single.releaseLabelFor(package("cli", "cli.nimble")) == "version"
-    check several.releaseLabelFor(package("web", "package.json")) == "web"
+suite "naming a release the whole repository shares":
+  ## A lone package has nothing to distinguish itself from, and a fixed
+  ## workspace moves every package together, so neither names a package.
+  let lone = workspaceOf(@["cli"])
+  let fixed = workspaceOf(@["web", "cli"], strategy = wsFixed)
+
+  test "a lone package is just the version":
+    check lone.releaseLabelFor(release("cli", "1.0.0", blMajor)) == "version"
+    check lone.releaseCommitSubject(@[release("cli", "1.0.0", blMajor)]) ==
+      "version: v1.0.0"
+
+  test "a fixed workspace is just the version, however many packages it has":
+    let wholeRepository = release("", "0.2.0", blMinor)
+    check fixed.releaseLabelFor(wholeRepository) == "version"
+    check fixed.releaseCommitSubject(@[wholeRepository]) == "version: v0.2.0"
