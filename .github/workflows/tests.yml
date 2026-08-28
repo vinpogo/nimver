@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.10"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install libpcre
+        run: sudo apt-get update && sudo apt-get install -y libpcre3
+
+      - name: Build nimver
+        run: nimble build -y
+
+      - name: Run test suites
+        run: |
+          failed=()
+          for suite in tests/test_*.nim; do
+            echo "::group::$suite"
+            if ! nim c -r --hints:off --verbosity:0 --path:src "$suite"; then
+              failed+=("$suite")
+            fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -ne 0 ]; then
+            printf 'failed: %s\n' "${failed[@]}"
+            exit 1
+          fi
