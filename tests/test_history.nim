@@ -34,7 +34,7 @@ suite "history":
     let (rebaseOutput, rebaseCode) = rebaseInteractive(
       dir,
       run("git rev-parse HEAD~3", dir).output.strip(),
-      "s/^pick \\(\\S*\\) fix: b/reword \\1 fix: b/",
+      "/^pick \\S* .*fix: b$/s/^pick/reword/",
       "s/^fix: b$/feat: b is bigger than thought/",
     )
     check rebaseCode == 0
@@ -74,7 +74,7 @@ suite "history":
     let (_, rebaseCode) = rebaseInteractive(
       dir,
       run("git rev-parse HEAD~2", dir).output.strip(),
-      "s/^pick \\(\\S*\\) fix: b/squash \\1 fix: b/",
+      "/^pick \\S* .*fix: b$/s/^pick/squash/",
       "1s/.*/feat: a and b together/",
     )
     check rebaseCode == 0
