@@ -21,8 +21,7 @@ A breaking marker forces `major` regardless of the type's configured bump.
 ## Everyday conventions
 
 - Avoid writing comments unless they are necessary. Always prefer readable code over comments.
-- Toolchain comes from mise: prefer mise tasks, otherwise prefix commands with `mise exec --`.
-- Format Nim with nph before committing: `mise exec -- nph <files>`.
+- Format Nim with nph before committing: `nph <files>`.
 - Do not trust the exit status: nimble exits 0 even when a suite fails
   (v0.22.2), and it stops at the first failing suite rather than running the
   rest. Read the output - `All tests passed` is the only line that means it.

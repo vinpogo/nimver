@@ -1,13 +1,5 @@
 [
   {
-    "label": "Mise trust and install a new worktree",
-    "command": "mise trust \"$ZED_WORKTREE_ROOT\" && mise run install",
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "hooks": ["create_worktree"],
-    "reveal": "no_focus",
-    "hide": "on_success",
-  },
-  {
     "label": "Rebase current branch onto origin/main",
     "command": "git",
     "args": ["rebase", "origin/main"],
