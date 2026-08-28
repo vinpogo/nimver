@@ -14,25 +14,6 @@ cd "$repo_root"
 
 log() { printf 'prepare: %s\n' "$*" >&2; }
 
-# --- mise ------------------------------------------------------------------
-# A new worktree is a new path, and mise refuses to load a config it has not
-# been told to trust - interactively prompting when a terminal is attached.
-# Trusting it here keeps this script, the agent's shell, and any `mise x` call
-# non-interactive.
-mise_config=false
-if command -v mise >/dev/null 2>&1; then
-  for cfg in mise.toml .mise.toml mise.local.toml .config/mise.toml .config/mise/config.toml; do
-    if [[ -f $cfg ]]; then
-      mise_config=true
-      break
-    fi
-  done
-fi
-
-if [[ $mise_config == true ]]; then
-  mise trust --yes --quiet >/dev/null 2>&1 || log "warning: 'mise trust' failed"
-fi
-
 # --- nimver ----------------------------------------------------------------
 # Nim projects in this workspace version themselves with nimver: Conventional
 # Commits are validated by a commit-msg hook, and a release reads the bump
@@ -50,13 +31,9 @@ if [[ ! -f .nimver/config.ini ]]; then
   exit 0
 fi
 
-# nimver is installed into the nimble bin dir, which is only on PATH once the
-# repo's toolchain is active - ask mise for it if this shell does not have it.
+# nimver is installed into the nimble bin dir, which a shell only has on PATH
+# once the toolchain is active.
 nimver_bin="$(command -v nimver 2>/dev/null || true)"
-if [[ -z $nimver_bin && $mise_config == true ]]; then
-  # MISE_AUTO_INSTALL=0: resolve what is already installed, never install.
-  nimver_bin="$(MISE_AUTO_INSTALL=0 mise which nimver 2>/dev/null || true)"
-fi
 if [[ -z $nimver_bin ]]; then
   log "warning: nimver not found; hooks will look it up on PATH at commit time"
   log "         install it with 'nimble install' from the nimver repo"
