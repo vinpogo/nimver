@@ -1,4 +1,5 @@
-import std/[os, sets, strutils, tables, options]
+import std/[sets, strutils, tables, options]
+import ./sysio
 import ./changes
 import ./config
 import ./adapters/manifest
@@ -138,20 +139,21 @@ proc workspaceLayout*(
       )
 
     if detectedManifestNames.len > 1:
-      # Nothing in the config says how detected siblings relate, and nearest
-      # ancestor cannot tell them apart, so release them together unless the
-      # config asked for separate releases outright.
+      # Nearest ancestor cannot tell siblings apart, so release them together
+      # unless the config asked for separate releases outright. Only a config
+      # that says nothing is advised about the choice: one that names its
+      # strategy is not being guessed at.
       if config.strategyWasSpecified and config.workspaceStrategy == wsIndependent:
         if not quiet:
-          stderr.writeLine(
+          writeError(
             "nimver: found " & $detectedManifestNames.len &
               " manifests in the repository root (" & result.packageNames().join(", ") &
               "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
           )
       else:
         result.strategy = wsFixed
-        if not quiet:
-          stderr.writeLine(
+        if not quiet and not config.strategyWasSpecified:
+          writeError(
             "nimver: found " & $detectedManifestNames.len &
               " manifests in the repository root (" & result.packageNames().join(", ") &
               "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."

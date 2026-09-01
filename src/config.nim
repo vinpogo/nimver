@@ -1,4 +1,5 @@
-import std/[os, streams, parsecfg, tables, sets, strutils, sequtils, sugar, options]
+import std/[streams, parsecfg, tables, sets, strutils, sequtils, sugar, options]
+import ./sysio
 import ./semver
 import ./commitparser
 
@@ -138,11 +139,11 @@ proc parseConfig*(contents, path: string): NimverConfig =
 
 proc loadUserConfig*(repoRoot: string): NimverConfig =
   let path = configPath(repoRoot)
-  if not fileExists(path):
+  if not fileAt(path):
     raise newException(
       IOError, "Config not found at " & path & ". Run `nimver init` first."
     )
-  parseConfig(readFile(path), path)
+  parseConfig(readFileContents(path), path)
 
 func lookupLevel(config: NimverConfig, commitType: string): Option[BumpLevel] =
   let key = commitType.toLowerAscii()

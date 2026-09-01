@@ -2,6 +2,7 @@ import std/[algorithm, options, strutils, tables]
 import ./changes
 import ./commitparser
 import ./config
+import ./sysio
 import ./gitutils
 import ./adapters/manifest
 import ./result
@@ -79,7 +80,7 @@ proc snapshotAt(repoRoot, revision: string, currentConfig: NimverConfig): Snapsh
     try:
       result.config = parseConfig(contents.get, revision & ":" & ConfigRelPath)
     except IOError, ValueError:
-      stderr.writeLine(
+      writeError(
         "nimver: keeping the current configuration for " & revision[0 ..< 8] & ": " &
           getCurrentExceptionMsg()
       )
@@ -118,7 +119,7 @@ proc changeFor*(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
 
   let maybeLevel = validateAndLookup(snapshot.config, parsed.value)
   if isNone(maybeLevel):
-    stderr.writeLine(
+    writeError(
       "nimver: skipping " & record.hash[0 ..< 8] & ": unknown commit type '" &
         parsed.value.commitType & "'"
     )

@@ -6,9 +6,21 @@ It uses your Git commit history to determine the next version, and even writes y
 
 ## Install
 
+From npm (needs Node 18+):
+
+```sh
+npm install --save-dev @vingy/nimver   # or: npm install -g @vingy/nimver
+```
+
+The package is scoped, but the command it installs is plain `nimver` (or `npx nimver`).
+
+From Nimble:
+
 ```sh
 nimble install nimver
 ```
+
+Or grab a prebuilt binary for your platform from the [releases page](https://github.com/vinpogo/nimver/releases) and put it on your `PATH`. The binary has no runtime dependencies beyond `git`.
 
 ## Setup (per repository)
 

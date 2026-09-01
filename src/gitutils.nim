@@ -1,4 +1,5 @@
-import std/[osproc, options, strutils, sequtils, os, tables]
+import std/[options, strutils, sequtils, tables]
+import ./sysio
 
 type CommitRecord* = object
   hash*: string
@@ -9,8 +10,8 @@ const
   RecordSeparator = "\x1e"
   FieldSeparator = "\x1f"
 
-proc tryRunGit(args: seq[string]): tuple[output: string, exitCode: int] =
-  execCmdEx("git " & args.map(quoteShell).join(" "))
+proc tryRunGit(args: seq[string]): CommandResult =
+  runCommand("git", args)
 
 proc runGit(args: seq[string]): string =
   let (output, code) = tryRunGit(args)

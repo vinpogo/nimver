@@ -1,4 +1,5 @@
-import std/[os, strutils, sequtils, tables]
+import std/[strutils, sequtils, tables]
+import ./sysio
 import config
 import changes
 import adapters/manifest

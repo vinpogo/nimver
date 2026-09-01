@@ -1,7 +1,8 @@
 ## Builds a `CHANGELOG.md` section (grouped by Conventional Commit type,
 ## with breaking changes called out separately) and prepends it to the file.
 
-import std/[os, strutils, times, tables, sequtils]
+import std/[strutils, times, tables, sequtils]
+import ./sysio
 import ./changes
 import ./semver
 
@@ -82,11 +83,11 @@ proc buildSection*(
 
 proc prependToChangelog*(changelogPath: string, section: string) =
   const header = "# Changelog"
-  if not fileExists(changelogPath):
-    writeFile(changelogPath, header & "\n\n" & section)
+  if not fileAt(changelogPath):
+    writeFileContents(changelogPath, header & "\n\n" & section)
     return
 
-  let existing = readFile(changelogPath)
+  let existing = readFileContents(changelogPath)
   if existing.startsWith(header):
     let idx = existing.find('\n')
     let rest =
@@ -94,6 +95,6 @@ proc prependToChangelog*(changelogPath: string, section: string) =
         ""
       else:
         existing[idx + 1 .. ^1].strip(leading = true, trailing = false)
-    writeFile(changelogPath, header & "\n\n" & section & "\n" & rest)
+    writeFileContents(changelogPath, header & "\n\n" & section & "\n" & rest)
   else:
-    writeFile(changelogPath, header & "\n\n" & section & "\n" & existing)
+    writeFileContents(changelogPath, header & "\n\n" & section & "\n" & existing)

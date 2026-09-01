@@ -1,12 +1,13 @@
 ## Reads and rewrites the `version` field of the project's `.nimble` file.
 
-import std/[os, strutils]
+import std/strutils
+import ../sysio
 import ./sourceedit
 import ../semver
 
 proc findNimbleFile*(repoRoot: string): string =
-  for directoryEntryKind, directoryEntryPath in walkDir(repoRoot):
-    if directoryEntryKind == pcFile and directoryEntryPath.endsWith(".nimble"):
+  for directoryEntryPath in filesIn(repoRoot):
+    if directoryEntryPath.endsWith(".nimble"):
       return directoryEntryPath
   raise newException(IOError, "No .nimble file found in " & repoRoot)
 
@@ -48,11 +49,13 @@ proc versionValueSpan(nimbleFilePath, sourceContent: string): SourceSpan =
   raise newException(IOError, "Could not find a 'version' field in " & nimbleFilePath)
 
 proc readVersion*(nimbleFilePath: string): SemVer =
-  let sourceContent = readFile(nimbleFilePath)
+  let sourceContent = readFileContents(nimbleFilePath)
   let versionSpan = versionValueSpan(nimbleFilePath, sourceContent)
   parseSemVer(sourceContent[versionSpan.startIndex ..< versionSpan.endIndex])
 
 proc writeVersion*(nimbleFilePath: string, newVersion: SemVer) =
-  let sourceContent = readFile(nimbleFilePath)
+  let sourceContent = readFileContents(nimbleFilePath)
   let versionSpan = versionValueSpan(nimbleFilePath, sourceContent)
-  writeFile(nimbleFilePath, replaceSpan(sourceContent, versionSpan, $newVersion))
+  writeFileContents(
+    nimbleFilePath, replaceSpan(sourceContent, versionSpan, $newVersion)
+  )
