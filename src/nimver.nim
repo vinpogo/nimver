@@ -1,4 +1,5 @@
-import std/[os, strutils, sequtils, options]
+import std/[strutils, sequtils, options]
+import ./sysio
 import ./gitutils
 import ./result
 import ./commands/init
@@ -21,7 +22,7 @@ See https://github.com/vinpogo/nimver for details.
 """
 
 when isMainModule:
-  let args = commandLineParams()
+  let args = cliArgs()
   if args.len == 0:
     echo Usage
     quit(1)
@@ -41,7 +42,7 @@ when isMainModule:
   try:
     repoRoot = findRepoRoot()
   except IOError as e:
-    stderr.writeLine("nimver: " & e.msg)
+    writeError("nimver: " & e.msg)
     quit(1)
 
   try:
@@ -52,16 +53,16 @@ when isMainModule:
       cmdInstallHooks(repoRoot, "--force" in params)
     of "check-commit-msg":
       if params.len < 1:
-        stderr.writeLine("Usage: nimver check-commit-msg <path-to-message-file>")
+        writeError("Usage: nimver check-commit-msg <path-to-message-file>")
         quit(1)
       let checkResult = cmdCheckCommitMsg(repoRoot, params[0])
       if isFailure(checkResult):
-        stderr.writeLine(checkResult.error)
+        writeError(checkResult.error)
         quit(1)
     of "bump":
       let nonFlagArgs = params.filterIt(not it.startsWith("--"))
       if nonFlagArgs.len > 1:
-        stderr.writeLine("nimver: `bump` takes at most one package name")
+        writeError("nimver: `bump` takes at most one package name")
         quit(1)
       let requestedPackageName =
         if nonFlagArgs.len > 0:
@@ -73,5 +74,5 @@ when isMainModule:
       echo Usage
       quit(1)
   except IOError as e:
-    stderr.writeLine("nimver: " & e.msg)
+    writeError("nimver: " & e.msg)
     quit(1)
