@@ -5,8 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Least privilege by default; only the job that creates the release gets write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   binaries:
@@ -26,9 +27,9 @@ jobs:
             target: windows-amd64
             extension: .exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: jiro4989/setup-nim-action@v2
+      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
           nim-version: "2.2.10"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,7 +41,7 @@ jobs:
         shell: bash
         run: mv "dist/nimver${{ matrix.extension }}" "dist/nimver-${{ matrix.target }}${{ matrix.extension }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: nimver-${{ matrix.target }}
           path: dist/nimver-${{ matrix.target }}${{ matrix.extension }}
@@ -51,19 +52,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # `npm publish --provenance` signs with an OIDC token.
+      id-token: write # The OIDC token npm trusted publishing authenticates with.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: jiro4989/setup-nim-action@v2
+      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
           nim-version: "2.2.10"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24.20.0"
           registry-url: "https://registry.npmjs.org"
+
+      - name: Use an npm that can publish via OIDC
+        # Trusted publishing needs npm >= 11.5.1; what Node ships with is not
+        # guaranteed to be recent enough.
+        run: npm install -g npm@latest
 
       - name: Build Node bundle
         run: nimble buildJs -y
@@ -75,23 +81,26 @@ jobs:
         run: npm pack --dry-run
 
       - name: Publish to npm
+        # Authentication is the OIDC trusted publisher configured on npmjs.com,
+        # so there is no token to leak here. Provenance comes with it; the flag
+        # is kept so an unattested publish fails rather than passing quietly.
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish:
     name: github release
     needs: [binaries, npm]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Creating the release and uploading its binaries.
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
           merge-multiple: true
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: artifacts/*
           generate_release_notes: true
