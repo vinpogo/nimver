@@ -1,0 +1,29 @@
+{
+  "name": "@vingy/nimver",
+  "version": "3.0.0",
+  "description": "A package to manage semantic versioning from commit messages",
+  "keywords": [
+    "semver",
+    "conventional-commits",
+    "changelog",
+    "release",
+    "versioning"
+  ],
+  "homepage": "https://github.com/vinpogo/nimver",
+  "bugs": "https://github.com/vinpogo/nimver/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinpogo/nimver.git"
+  },
+  "license": "MIT",
+  "author": "vingy",
+  "bin": {
+    "nimver": "bin/nimver.js"
+  },
+  "files": [
+    "bin/nimver.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

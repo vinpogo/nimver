@@ -80,6 +80,26 @@ suite "manifest adapters":
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.1.1"
 
+  test "a config naming the fixed strategy is not advised to name it":
+    # The advice is about a choice nimver made on its own. Once the config says
+    # `fixed`, siblings still release together - but nothing was assumed.
+    let dir = freshPackageRepo("sibling-manifests-strategy-fixed")
+    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    let configPath = dir / ".nimver" / "config.ini"
+    writeFile(configPath, readFile(configPath) & "\n[workspace]\nstrategy = fixed\n")
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: configure workspace\"", dir)
+    discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "assuming strategy = fixed" notin output
+
+    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
+    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version: v0.1.1"
+
   test "declaring one manifest leaves its sibling alone, without renaming releases":
     # Declaring a package is how you exclude an unrelated manifest - here a
     # package.json that is only tooling. Doing so must not turn `v0.1.1` into

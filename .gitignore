@@ -4,3 +4,6 @@ testRepo/
 # Compiled test suites: Nim emits an extension-less binary next to each source.
 tests/test_*
 !tests/test_*.nim
+dist/
+/bin/
+node_modules/

@@ -1,0 +1,97 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux-amd64
+          - os: macos-13
+            target: macos-amd64
+          - os: macos-14
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-amd64
+            extension: .exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.10"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build binary
+        run: nimble buildBinary -y
+
+      - name: Name the artifact after its target
+        shell: bash
+        run: mv "dist/nimver${{ matrix.extension }}" "dist/nimver-${{ matrix.target }}${{ matrix.extension }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nimver-${{ matrix.target }}
+          path: dist/nimver-${{ matrix.target }}${{ matrix.extension }}
+          if-no-files-found: error
+
+  npm:
+    name: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # `npm publish --provenance` signs with an OIDC token.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.10"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.20.0"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Build Node bundle
+        run: nimble buildJs -y
+
+      - name: Smoke test the bundle
+        run: node bin/nimver.js version
+
+      - name: Check what would be published
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish:
+    name: github release
+    needs: [binaries, npm]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

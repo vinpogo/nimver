@@ -1,7 +1,7 @@
 ## The `commit-msg` hook, which is all nimver installs: committing records
 ## nothing, it only refuses messages a release would not be able to read.
 
-import std/[unittest, os, strutils]
+import std/[unittest, os, strutils, sequtils]
 import ./support
 
 suite "hooks":
@@ -24,6 +24,22 @@ suite "hooks":
     check code != 0
     check "unknown commit type 'bogus'" in output
     check run("git log --oneline", dir).output.count("bogus") == 0
+
+  test "the hook works when nimver is not on the hook's PATH":
+    let dir = freshRepo("hook-off-path")
+    let withoutNimver =
+      getEnv("PATH").split(PathSep).filterIt(it != ProjectRoot).join($PathSep)
+    let commit = "PATH=" & quoteShell(withoutNimver) & " git commit -q -m "
+
+    writeFile(dir / "a.txt", "hi")
+    discard run("git add -A", dir)
+
+    let (rejected, rejectedCode) = run(commit & quoteShell("bogus: nope"), dir)
+    check rejectedCode != 0
+    check "unknown commit type 'bogus'" in rejected
+
+    check run(commit & quoteShell("feat: add a"), dir).code == 0
+    check run("git log --oneline", dir).output.count("add a") == 1
 
   test "breaking change forces a major bump regardless of type mapping":
     let dir = freshRepo("breaking")

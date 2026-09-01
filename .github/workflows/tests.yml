@@ -20,9 +20,6 @@ jobs:
           nim-version: "2.2.10"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install libpcre
-        run: sudo apt-get update && sudo apt-get install -y libpcre3
-
       - name: Build nimver
         run: nimble build -y
 
@@ -40,3 +37,28 @@ jobs:
             printf 'failed: %s\n' "${failed[@]}"
             exit 1
           fi
+
+  js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jiro4989/setup-nim-action@v2
+        with:
+          nim-version: "2.2.10"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build the Node bundle
+        run: nimble buildJs -y
+
+      - name: Smoke test the Node bundle
+        run: |
+          node bin/nimver.js version
+          node bin/nimver.js bump --dry-run
+
+      - name: Check what would be published
+        run: npm pack --dry-run
