@@ -1,5 +1,5 @@
-## Unit tests for rendering a `CHANGELOG.md` section: how entries are grouped,
-## how a bullet is worded, and when a heading names its package.
+## Unit tests for rendering a `CHANGELOG.md` section: which groups appear and in
+## what order, how a bullet is worded, and when a heading names its package.
 
 import std/[unittest, strutils, times]
 import changelog
@@ -7,14 +7,21 @@ import changes
 import semver
 
 proc entry(
-    commitType, message: string, breaking = false, level = blPatch, releaseNote = ""
+    commitType, message: string,
+    breaking = false,
+    level = blPatch,
+    releaseNote = "",
+    breakingNote = "",
+    scope = "",
 ): ChangeEntry =
   ChangeEntry(
     commitType: commitType,
+    scope: scope,
     bumpLevel: level,
     breaking: breaking,
     message: message,
     releaseNote: releaseNote,
+    breakingNote: breakingNote,
   )
 
 let today = now().format("yyyy-MM-dd")
@@ -28,132 +35,155 @@ suite "section heading":
     let section = buildSection(parseSemVer("0.2.0"), @[], packageName = "web")
     check section.startsWith("## [web 0.2.0] - " & today)
 
-suite "grouping entries":
-  test "entries are grouped under their type's label":
+suite "the commit list":
+  test "a release without notes is a heading and its commits":
     let section = buildSection(
       parseSemVer("1.1.0"),
       @[
         entry("feat", "feat: add a thing", level = blMinor),
-        entry("fix", "fix: mend a thing"),
+        entry("fix", "fix(parser): mend a thing"),
       ],
     )
     check section ==
       [
-        "## [1.1.0] - " & today, "", "### Features", "- add a thing", "", "### Fixes",
-        "- mend a thing", "",
+        "## [1.1.0] - " & today, "", "### Commits", "- feat: add a thing",
+        "- fix(parser): mend a thing", "",
       ].join("\n")
 
-  test "several entries of one type share its group":
+  test "headers are listed verbatim, prefix and marker and all":
     let section = buildSection(
-      parseSemVer("1.0.1"),
+      parseSemVer("2.0.0"),
+      @[
+        entry("feat", "feat(parser)!: rework a thing", breaking = true, level = blMajor)
+      ],
+    )
+    check "- feat(parser)!: rework a thing" in section
+
+  test "commits are not grouped by type":
+    let section = buildSection(
+      parseSemVer("1.1.0"),
       @[
         entry("fix", "fix: first"),
-        entry("docs", "docs: unrelated", level = blNone),
-        entry("fix", "fix: second"),
+        entry("feat", "feat: middle", level = blMinor),
+        entry("fix", "fix: last"),
       ],
     )
-    check section.count("### Fixes") == 1
-    check "- first\n- second" in section
-
-  test "types appear in the order they were first seen":
-    let section = buildSection(
-      parseSemVer("1.0.1"),
-      @[entry("fix", "fix: mend"), entry("feat", "feat: add", level = blMinor)],
-    )
-    check section.find("### Fixes") < section.find("### Features")
-
-  test "an unlabelled type falls back to Other Changes":
-    let section = buildSection(parseSemVer("1.0.1"), @[entry("wip", "wip: halfway")])
-    check "### Other Changes\n- halfway" in section
-
-suite "breaking changes":
-  test "breaking entries are called out first, before every type group":
-    let section = buildSection(
-      parseSemVer("2.0.0"),
-      @[
-        entry("fix", "fix: mend a thing"),
-        entry("feat", "feat!: rework a thing", breaking = true, level = blMajor),
-      ],
-    )
-    check section.find("### Breaking Changes") < section.find("### Fixes")
-    check "### Breaking Changes\n- rework a thing" in section
-
-  test "a breaking entry is not repeated in its type's group":
-    let section = buildSection(
-      parseSemVer("2.0.0"),
-      @[entry("feat", "feat!: rework a thing", breaking = true, level = blMajor)],
-    )
-    check section.count("- rework a thing") == 1
+    check section.count("### Commits") == 1
+    check "- fix: first\n- feat: middle\n- fix: last" in section
     check "### Features" notin section
+    check "### Fixes" notin section
+    check "### Other Changes" notin section
 
-suite "bullet wording":
-  test "the type, scope and breaking marker are dropped":
-    let section =
-      buildSection(parseSemVer("1.0.1"), @[entry("fix", "fix(parser)!: mend a thing")])
-    check "- mend a thing" in section
-
-  test "only the first line of the message is kept":
+  test "only the first line of a message is kept":
     let section = buildSection(
       parseSemVer("1.0.1"),
-      @[
-        entry(
-          "fix",
-          "fix: mend a thing\n\nThe body explains why.\n\nBREAKING CHANGE: nothing really",
-        )
-      ],
+      @[entry("fix", "fix: mend a thing\n\nThe body explains why.")],
     )
-    check "- mend a thing" in section
+    check "- fix: mend a thing" in section
     check "body explains" notin section
-
-  test "a subject containing a colon keeps it":
-    let section =
-      buildSection(parseSemVer("1.0.1"), @[entry("fix", "fix: mend: the parser")])
-    check "- mend: the parser" in section
 
   test "a message without a header prefix is taken as written":
     let section = buildSection(parseSemVer("1.0.1"), @[entry("fix", "mend a thing")])
     check "- mend a thing" in section
 
 suite "release notes":
-  test "a note stands in for the subject":
+  test "an unscoped note leads, as a bullet of its own":
+    let section = buildSection(
+      parseSemVer("1.1.0"),
+      @[
+        entry(
+          "feat",
+          "feat: widen the parser",
+          level = blMinor,
+          releaseNote = "Types now accept uppercase letters.",
+        )
+      ],
+    )
+    check section ==
+      [
+        "## [1.1.0] - " & today, "", "- Types now accept uppercase letters.", "",
+        "### Commits", "- feat: widen the parser", "",
+      ].join("\n")
+
+  test "a scope gives the note a section of its own":
     let section = buildSection(
       parseSemVer("1.0.1"),
       @[
         entry(
           "fix",
-          "fix(parser): tighten the scope regex",
-          releaseNote = "Scopes may now contain digits, slashes and dots.",
+          "fix(parser): tighten it",
+          scope = "parser",
+          releaseNote = "Scopes may now contain digits.",
         )
       ],
     )
-    check "- Scopes may now contain digits, slashes and dots." in section
-    check "tighten the scope regex" notin section
+    check "### parser\n- Scopes may now contain digits." in section
 
-  test "a note is taken verbatim, header-looking prefix and all":
+  test "notes sharing a scope share its section":
     let section = buildSection(
       parseSemVer("1.0.1"),
-      @[entry("fix", "fix: a", releaseNote = "fix: this colon is not a prefix")],
-    )
-    check "- fix: this colon is not a prefix" in section
-
-  test "an entry without a note still reads from its subject":
-    let section =
-      buildSection(parseSemVer("1.0.1"), @[entry("fix", "fix(parser): tighten it")])
-    check "- tighten it" in section
-
-  test "a note does not move the entry out of its type's group":
-    let section = buildSection(
-      parseSemVer("1.1.0"),
       @[
-        entry("feat", "feat: a", level = blMinor, releaseNote = "Added a thing."),
-        entry("fix", "fix: b", releaseNote = "Fixed a thing."),
+        entry("fix", "fix(parser): a", scope = "parser", releaseNote = "First."),
+        entry("fix", "fix(cli): b", scope = "cli", releaseNote = "Unrelated."),
+        entry("fix", "fix(parser): c", scope = "parser", releaseNote = "Second."),
       ],
     )
-    check section.find("### Features") < section.find("- Added a thing.")
-    check section.find("- Added a thing.") < section.find("### Fixes")
-    check section.find("### Fixes") < section.find("- Fixed a thing.")
+    check section.count("### parser") == 1
+    check "### parser\n- First.\n- Second." in section
 
-  test "a breaking entry is called out with its note":
+  test "scopes appear in the order they were first seen":
+    let section = buildSection(
+      parseSemVer("1.0.1"),
+      @[
+        entry("fix", "fix(cli): a", scope = "cli", releaseNote = "First."),
+        entry("fix", "fix(parser): b", scope = "parser", releaseNote = "Second."),
+      ],
+    )
+    check section.find("### cli") < section.find("### parser")
+
+  test "the scope is rendered as it was written":
+    let section = buildSection(
+      parseSemVer("1.0.1"),
+      @[entry("fix", "fix(net/http): a", scope = "net/http", releaseNote = "A note.")],
+    )
+    check "### net/http" in section
+
+  test "unscoped notes lead, and scoped sections follow":
+    let section = buildSection(
+      parseSemVer("1.0.1"),
+      @[
+        entry("fix", "fix(cli): a", scope = "cli", releaseNote = "Scoped."),
+        entry("fix", "fix: b", releaseNote = "Unscoped."),
+      ],
+    )
+    check section.find("- Unscoped.") < section.find("### cli")
+
+  test "a commit without a note contributes only to the commit list":
+    let section = buildSection(
+      parseSemVer("1.0.1"), @[entry("fix", "fix(parser): tighten it", scope = "parser")]
+    )
+    check "### parser" notin section
+    check "- fix(parser): tighten it" in section
+
+suite "breaking changes":
+  test "breaking entries are called out above the notes":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[
+        entry("fix", "fix: b", releaseNote = "A note."),
+        entry(
+          "feat",
+          "feat!: rework a thing",
+          breaking = true,
+          level = blMajor,
+          breakingNote = "The config key moved.",
+        ),
+      ],
+    )
+    check section.find("### Breaking Changes") < section.find("- A note.")
+    check "### Breaking Changes\n- The config key moved." in section
+
+  test "the breaking footer wins over the release note":
     let section = buildSection(
       parseSemVer("2.0.0"),
       @[
@@ -162,8 +192,56 @@ suite "release notes":
           "feat!: a",
           breaking = true,
           level = blMajor,
-          releaseNote = "Everything moved; see the migration guide.",
+          releaseNote = "The feature.",
+          breakingNote = "The break.",
         )
       ],
     )
-    check "### Breaking Changes\n- Everything moved; see the migration guide." in section
+    check "- The break." in section
+    check "- The feature." notin section
+
+  test "a release note stands in when there is no breaking footer":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[
+        entry(
+          "feat",
+          "feat!: a",
+          breaking = true,
+          level = blMajor,
+          releaseNote = "Everything moved.",
+        )
+      ],
+    )
+    check "### Breaking Changes\n- Everything moved." in section
+
+  test "a bare bang falls back to the subject":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[entry("feat", "feat(cli)!: rework a thing", breaking = true, level = blMajor)],
+    )
+    check "### Breaking Changes\n- rework a thing" in section
+
+  test "a breaking entry is not repeated among the notes":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[
+        entry(
+          "feat",
+          "feat(cli)!: a",
+          breaking = true,
+          level = blMajor,
+          scope = "cli",
+          releaseNote = "Everything moved.",
+        )
+      ],
+    )
+    check section.count("- Everything moved.") == 1
+    check "### cli" notin section
+
+  test "but it is still listed among the commits":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[entry("feat", "feat!: a", breaking = true, level = blMajor)],
+    )
+    check "### Commits\n- feat!: a" in section
