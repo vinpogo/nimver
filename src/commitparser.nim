@@ -8,6 +8,7 @@ type
     breaking*: bool
     subject*: string
     releaseNote*: string
+    breakingNote*: string
     rawMessage*: string ## Full message, comments and trailing blank lines removed.
 
   ParsedHeader = object
@@ -26,25 +27,27 @@ func stripComments(raw: string): seq[string] =
     lines.delete(lines.high)
   lines
 
-func hasBreakingFooter(lines: seq[string]): bool =
-  lines.anyIt(it.startsWith("BREAKING CHANGE:") or it.startsWith("BREAKING-CHANGE:"))
-
 const
-  ReleaseNoteKey = "release-note:"
+  ReleaseNoteKeys = ["Release-Note"]
+  BreakingKeys = ["BREAKING CHANGE", "BREAKING-CHANGE"]
   FooterKeyChars = {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '-'}
 
 func startsAFooter(line: string): bool =
-  ## A git trailer, `Key: value`, plus the spelling the Conventional Commits
-  ## spec gives breaking changes, which has a space in its key.
-  if line.startsWith("BREAKING CHANGE:"):
+  if BreakingKeys.anyIt(line.startsWith(it & ":")):
     return true
   let colon = line.find(':')
   colon > 0 and line[0 ..< colon].allCharsInSet(FooterKeyChars)
 
-func releaseNoteFooter(lines: seq[string]): string =
-  ## Searched from the second line on, so a subject that reads like the footer
-  ## stays a subject. The first footer wins, and it runs on over wrapped lines
-  ## until a blank line or the next footer.
+func opensFooter(line: string, keys: openArray[string], caseSensitive: bool): bool =
+  if caseSensitive:
+    keys.anyIt(line.startsWith(it & ":"))
+  else:
+    let lowered = line.toLowerAscii()
+    keys.anyIt(lowered.startsWith(toLowerAscii(it & ":")))
+
+func footerValue(
+    lines: seq[string], keys: openArray[string], caseSensitive = false
+): Option[string] =
   var parts: seq[string] = @[]
   var reading = false
   for line in lines[1 .. ^1]:
@@ -52,10 +55,13 @@ func releaseNoteFooter(lines: seq[string]): string =
       if line.len == 0 or line.startsAFooter():
         break
       parts.add(line)
-    elif line.toLowerAscii().startsWith(ReleaseNoteKey):
+    elif line.opensFooter(keys, caseSensitive):
       reading = true
-      parts.add(line[ReleaseNoteKey.len .. ^1])
-  parts.join(" ").strip()
+      parts.add(line[line.find(':') + 1 .. ^1])
+  if reading:
+    some(parts.join(" ").strip())
+  else:
+    none(string)
 
 const
   TypeChars = {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '-', '_', '/'}
@@ -123,7 +129,8 @@ func parseCommitMessage*(raw: string): Result[ParsedCommit] =
 
   let commitType = parsedHeader.value.commitType
   let scope = parsedHeader.value.scope
-  let breaking = parsedHeader.value.breaking or hasBreakingFooter(lines)
+  let breakingFooter = footerValue(lines, BreakingKeys, caseSensitive = true)
+  let breaking = parsedHeader.value.breaking or breakingFooter.isSome
   let subject = parsedHeader.value.subject
 
   let parsed = ParsedCommit(
@@ -131,7 +138,8 @@ func parseCommitMessage*(raw: string): Result[ParsedCommit] =
     scope: scope,
     breaking: breaking,
     subject: subject,
-    releaseNote: releaseNoteFooter(lines),
+    releaseNote: footerValue(lines, ReleaseNoteKeys).get(""),
+    breakingNote: breakingFooter.get(""),
     rawMessage: raw,
   )
   Success(parsed)

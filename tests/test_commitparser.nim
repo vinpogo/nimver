@@ -176,6 +176,48 @@ Release-Note: Everything moved; see the migration guide."""
     check parsed.value.breaking == true
     check parsed.value.releaseNote == "Everything moved; see the migration guide."
 
+suite "the breaking footer":
+  test "the footer's text is kept, wrapping and all":
+    let message = """feat: a
+
+BREAKING CHANGE: the config key moved, and every
+repository has to be re-initialised."""
+    let parsed = parseCommitMessage(message)
+    check parsed.value.breaking == true
+    check parsed.value.breakingNote ==
+      "the config key moved, and every repository has to be re-initialised."
+
+  test "the dashed spelling reads the same":
+    check parseCommitMessage("feat: a\n\nBREAKING-CHANGE: moved").value.breakingNote ==
+      "moved"
+
+  test "a bang alone breaks without a note":
+    let parsed = parseCommitMessage("feat!: a")
+    check parsed.value.breaking == true
+    check parsed.value.breakingNote == ""
+
+  test "the key is only read uppercase, as the spec asks":
+    let parsed = parseCommitMessage("feat: a\n\nbreaking change: a prose sentence")
+    check parsed.value.breaking == false
+    check parsed.value.breakingNote == ""
+
+  test "the header is not scanned for footers":
+    # `BREAKING-CHANGE` is a well-formed type, so without this the header would
+    # announce a break as a side effect of being read twice.
+    let parsed = parseCommitMessage("BREAKING-CHANGE: a")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "BREAKING-CHANGE"
+    check parsed.value.breaking == false
+
+  test "both footers can be read from one message":
+    let message = """feat!: a
+
+Release-Note: Everything moved.
+BREAKING CHANGE: the config key moved."""
+    let parsed = parseCommitMessage(message)
+    check parsed.value.releaseNote == "Everything moved."
+    check parsed.value.breakingNote == "the config key moved."
+
 suite "invalid commit messages":
   test "empty message":
     let message = ""
