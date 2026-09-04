@@ -12,7 +12,9 @@ const ChangesRelPrefix* = ".nimver/changes/"
 
 type ChangeEntry* = object
   commitType*: string
+  scope*: string
   bumpLevel*: BumpLevel
   breaking*: bool
   affectedPackages*: seq[string]
   message*: string
+  releaseNote*: string

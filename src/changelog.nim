@@ -31,8 +31,8 @@ proc firstLine(message: string): string =
     message[0 ..< idx].strip()
 
 proc bulletFor(entry: ChangeEntry): string =
-  ## Renders the commit's subject line only, dropping the `type(scope)!: `
-  ## header prefix so the changelog reads like prose.
+  if entry.releaseNote.len > 0:
+    return "- " & entry.releaseNote
   let line = firstLine(entry.message)
   let sepIdx = line.find(": ")
   let subject =

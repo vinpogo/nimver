@@ -90,6 +90,92 @@ suite "type and scope spelling":
     check parsed.value.commitType == "docs"
     check parsed.value.subject == "note: mind the gap"
 
+suite "the Release-Note footer":
+  test "a commit without one has no note":
+    check parseCommitMessage("feat: a").value.releaseNote == ""
+
+  test "the footer text is taken verbatim":
+    let message = """feat(parser): tighten the scope regex
+
+Release-Note: Scopes may now contain digits, slashes and dots."""
+    let parsed = parseCommitMessage(message)
+    check isSuccess(parsed) == true
+    check parsed.value.subject == "tighten the scope regex"
+    check parsed.value.releaseNote == "Scopes may now contain digits, slashes and dots."
+
+  test "the key is matched without regard to case":
+    check parseCommitMessage("feat: a\n\nrelease-note: hi").value.releaseNote == "hi"
+    check parseCommitMessage("feat: a\n\nRELEASE-NOTE: hi").value.releaseNote == "hi"
+
+  test "an empty footer is no note":
+    check parseCommitMessage("feat: a\n\nRelease-Note:").value.releaseNote == ""
+    check parseCommitMessage("feat: a\n\nRelease-Note:   ").value.releaseNote == ""
+
+  test "the first footer wins":
+    check parseCommitMessage("feat: a\n\nRelease-Note: first\nRelease-Note: second").value.releaseNote ==
+      "first"
+
+  test "a wrapped footer runs on until a blank line":
+    let message = """feat: a
+
+Release-Note: UPPERCASE, /, -, _ and numbers are now
+supported for commit types, scopes can additionally
+contain . and , .
+
+Some trailing paragraph that is not part of the note."""
+    check parseCommitMessage(message).value.releaseNote ==
+      "UPPERCASE, /, -, _ and numbers are now supported for commit types, " &
+      "scopes can additionally contain . and , ."
+
+  test "a wrapped footer stops at the next footer":
+    let message = """feat: a
+
+Release-Note: the note
+wraps once
+Co-Authored-By: someone <someone@example.com>"""
+    check parseCommitMessage(message).value.releaseNote == "the note wraps once"
+
+  test "a wrapped footer stops at a breaking footer":
+    let message = """feat!: a
+
+Release-Note: the note
+wraps once
+BREAKING CHANGE: everything moved"""
+    let parsed = parseCommitMessage(message)
+    check parsed.value.breaking == true
+    check parsed.value.releaseNote == "the note wraps once"
+
+  test "the value may start on the line after the key":
+    let message = """feat: a
+
+Release-Note:
+the whole note is down here"""
+    check parseCommitMessage(message).value.releaseNote == "the whole note is down here"
+
+  test "a body paragraph before the footer is not swallowed":
+    let message = """feat: a
+
+Some body explaining the change.
+
+Release-Note: the note"""
+    check parseCommitMessage(message).value.releaseNote == "the note"
+
+  test "a header that reads like the footer is still a header":
+    let parsed = parseCommitMessage("release-note: mind the gap")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "release-note"
+    check parsed.value.subject == "mind the gap"
+    check parsed.value.releaseNote == ""
+
+  test "a note survives alongside a breaking footer":
+    let message = """feat!: a
+
+BREAKING CHANGE: everything moved
+Release-Note: Everything moved; see the migration guide."""
+    let parsed = parseCommitMessage(message)
+    check parsed.value.breaking == true
+    check parsed.value.releaseNote == "Everything moved; see the migration guide."
+
 suite "invalid commit messages":
   test "empty message":
     let message = ""

@@ -134,10 +134,12 @@ proc changeFor*(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
   some(
     ChangeEntry(
       commitType: parsed.value.commitType,
+      scope: parsed.value.scope,
       bumpLevel: maybeLevel.get,
       breaking: parsed.value.breaking,
       affectedPackages: affected,
       message: parsed.value.rawMessage,
+      releaseNote: parsed.value.releaseNote,
     )
   )
 

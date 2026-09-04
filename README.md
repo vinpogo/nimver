@@ -178,6 +178,16 @@ and skipped with a warning when a release reads the history back. You can instea
 unknownType = patch   ; or reject (the default) | ignore | none | minor | major
 ```
 
+### Release notes
+
+By default, the commit messages subject is used for the changelog, but a `Release-Note:` footer can override it.
+
+```
+fix(parser): tighten the scope regex
+
+Release-Note: Scopes may now contain digits, slashes and dots.
+```
+
 ## CLI reference
 
 ```
