@@ -1,5 +1,21 @@
 # Changelog
 
+## [4.1.0] - 2026-09-04
+
+- UPPERCASE, /, -, _ and numbers characters are now supported for commit types, scopes can additionally contain . and , .
+- Allow mapping a commit type to unknown commit types. A new config entry `[commits.unknownType] = reject | ignore | none | minor | major | patch` controls the behavior.
+- All `Release-Note` footers will now be used for the changelog entry of a commit if present.
+
+### changelog-entry
+- The changelog entry now puts `Release-Note` footers in it's own section. Commit subjects are now not grouped by type anymore, but the plain commit header is added to a new Commits section. This should make the CHANGELOG more readable and valuable for consumers to read.
+
+### Commits
+- feat: allow more characters in commitparser
+- feat: allow unknown types if wanted
+- feat: allow `Release-Note` footer to override the changelog entry
+- refactor(commitparser): unify footer handling
+- refactor(changelog-entry): restructure changelog entry
+
 ## [4.0.0] - 2026-09-04
 
 ### Breaking Changes
