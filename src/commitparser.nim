@@ -22,8 +22,8 @@ func hasBreakingFooter(lines: seq[string]): bool =
   lines.anyIt(it.startsWith("BREAKING CHANGE:") or it.startsWith("BREAKING-CHANGE:"))
 
 const
-  TypeChars = {'a' .. 'z', '-'}
-  ScopeChars = {'a' .. 'z', '-'}
+  TypeChars = {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '-', '_', '/'}
+  ScopeChars = TypeChars + {'.', ','}
 
 func isMadeOf(text: string, allowed: set[char]): bool =
   text.len > 0 and text.allCharsInSet(allowed)

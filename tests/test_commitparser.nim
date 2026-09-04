@@ -61,6 +61,35 @@ suite "valid commit messages":
     check parsed.value.scope == ""
     check parsed.value.subject == "this is a test"
 
+suite "type and scope spelling":
+  test "uppercase and digits in type and scope":
+    let parsed = parseCommitMessage("Fix(API2): this is a test")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "Fix"
+    check parsed.value.scope == "API2"
+  test "a subsystem path as the type":
+    let parsed = parseCommitMessage("net/http: rework the dialer")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "net/http"
+    check parsed.value.scope == ""
+    check parsed.value.subject == "rework the dialer"
+  test "underscores and dashes":
+    let parsed = parseCommitMessage("feat_x(api-v2): this is a test")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "feat_x"
+    check parsed.value.scope == "api-v2"
+  test "dots and commas in scope, but not in type":
+    let parsed = parseCommitMessage("feat(web,cli.core)!: this is a test")
+    check isSuccess(parsed) == true
+    check parsed.value.scope == "web,cli.core"
+    check parsed.value.breaking == true
+    check isSuccess(parseCommitMessage("fe.at: this is a test")) == false
+  test "the subject keeps every colon after the first":
+    let parsed = parseCommitMessage("docs: note: mind the gap")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "docs"
+    check parsed.value.subject == "note: mind the gap"
+
 suite "invalid commit messages":
   test "empty message":
     let message = ""
@@ -98,3 +127,7 @@ suite "invalid commit messages":
     let message = "feat ure(scope): this is a test"
     let parsed = parseCommitMessage(message)
     check isSuccess(parsed) == false
+  test "still no parens inside a scope":
+    check isSuccess(parseCommitMessage("feat(a(b)): this is a test")) == false
+  test "still no bang inside a scope":
+    check isSuccess(parseCommitMessage("feat(sc!ope): this is a test")) == false
