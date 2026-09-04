@@ -72,8 +72,8 @@ suite "history":
 
     let dryRun = pending(dir)
     check "0.1.0 -> 0.2.0 (minor)" in dryRun
-    check "- b is bigger than thought" in dryRun
-    check "- a" in dryRun
+    check "- feat: b is bigger than thought" in dryRun
+    check "- fix: a" in dryRun
 
   test "reordering commits changes nothing about the release":
     let dir = freshRepo("history-reorder")
@@ -90,8 +90,8 @@ suite "history":
     # them in follows the history.
     let dryRun = pending(dir)
     check "0.1.0 -> 0.2.0 (minor)" in dryRun
-    check "- a" in dryRun
-    check "- b" in dryRun
+    check "- feat: a" in dryRun
+    check "- fix: b" in dryRun
 
   test "squashed commits count once, under the message they end up with":
     let dir = freshRepo("history-squash")
@@ -108,10 +108,10 @@ suite "history":
 
     let dryRun = pending(dir)
     check "0.1.0 -> 0.2.0 (minor)" in dryRun
-    check "- a and b together" in dryRun
+    check "- feat: a and b together" in dryRun
     # The two commits it was made of are gone, so neither is listed on its own.
-    check "\n- a\n" notin dryRun
-    check "\n- b\n" notin dryRun
+    check "\n- feat: a\n" notin dryRun
+    check "\n- fix: b\n" notin dryRun
 
   test "ignored types contribute nothing":
     let dir = freshRepo("history-ignored")
@@ -152,14 +152,14 @@ suite "history":
 
     check run("nimver init", dir).code == 0
     check run("nimver install-hooks", dir).code == 0
-    check "- from another life" in pending(dir) # counted, for now
+    check "- feat: from another life" in pending(dir) # counted, for now
 
     discard run("git tag v0.1.0 HEAD", dir)
     check commitFile(dir, "a.txt", "hi", "fix: the first with nimver").code == 0
 
     let dryRun = pending(dir)
     check "0.1.0 -> 0.1.1 (patch)" in dryRun
-    check "- the first with nimver" in dryRun
+    check "- fix: the first with nimver" in dryRun
     check "another life" notin dryRun
 
   test "a commit is read under the configuration it was made with":

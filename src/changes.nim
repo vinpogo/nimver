@@ -18,3 +18,4 @@ type ChangeEntry* = object
   affectedPackages*: seq[string]
   message*: string
   releaseNote*: string
+  breakingNote*: string

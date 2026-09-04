@@ -140,6 +140,7 @@ proc changeFor*(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
       affectedPackages: affected,
       message: parsed.value.rawMessage,
       releaseNote: parsed.value.releaseNote,
+      breakingNote: parsed.value.breakingNote,
     )
   )
 
