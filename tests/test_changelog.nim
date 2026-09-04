@@ -7,10 +7,14 @@ import changes
 import semver
 
 proc entry(
-    commitType, message: string, breaking = false, level = blPatch
+    commitType, message: string, breaking = false, level = blPatch, releaseNote = ""
 ): ChangeEntry =
   ChangeEntry(
-    commitType: commitType, bumpLevel: level, breaking: breaking, message: message
+    commitType: commitType,
+    bumpLevel: level,
+    breaking: breaking,
+    message: message,
+    releaseNote: releaseNote,
   )
 
 let today = now().format("yyyy-MM-dd")
@@ -109,3 +113,57 @@ suite "bullet wording":
   test "a message without a header prefix is taken as written":
     let section = buildSection(parseSemVer("1.0.1"), @[entry("fix", "mend a thing")])
     check "- mend a thing" in section
+
+suite "release notes":
+  test "a note stands in for the subject":
+    let section = buildSection(
+      parseSemVer("1.0.1"),
+      @[
+        entry(
+          "fix",
+          "fix(parser): tighten the scope regex",
+          releaseNote = "Scopes may now contain digits, slashes and dots.",
+        )
+      ],
+    )
+    check "- Scopes may now contain digits, slashes and dots." in section
+    check "tighten the scope regex" notin section
+
+  test "a note is taken verbatim, header-looking prefix and all":
+    let section = buildSection(
+      parseSemVer("1.0.1"),
+      @[entry("fix", "fix: a", releaseNote = "fix: this colon is not a prefix")],
+    )
+    check "- fix: this colon is not a prefix" in section
+
+  test "an entry without a note still reads from its subject":
+    let section =
+      buildSection(parseSemVer("1.0.1"), @[entry("fix", "fix(parser): tighten it")])
+    check "- tighten it" in section
+
+  test "a note does not move the entry out of its type's group":
+    let section = buildSection(
+      parseSemVer("1.1.0"),
+      @[
+        entry("feat", "feat: a", level = blMinor, releaseNote = "Added a thing."),
+        entry("fix", "fix: b", releaseNote = "Fixed a thing."),
+      ],
+    )
+    check section.find("### Features") < section.find("- Added a thing.")
+    check section.find("- Added a thing.") < section.find("### Fixes")
+    check section.find("### Fixes") < section.find("- Fixed a thing.")
+
+  test "a breaking entry is called out with its note":
+    let section = buildSection(
+      parseSemVer("2.0.0"),
+      @[
+        entry(
+          "feat",
+          "feat!: a",
+          breaking = true,
+          level = blMajor,
+          releaseNote = "Everything moved; see the migration guide.",
+        )
+      ],
+    )
+    check "### Breaking Changes\n- Everything moved; see the migration guide." in section
