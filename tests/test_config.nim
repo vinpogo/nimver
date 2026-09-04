@@ -44,6 +44,39 @@ wip = ignore
     check parsed.strategyWasSpecified == false
     check parsed.packages.len == 0
 
+suite "unknown types":
+  test "rejecting them is the default, and what `reject` spells out":
+    check parseConfig("[types]\nfeat = minor\n", "config.ini").unknownType.isNone
+    check parseConfig("[commits]\nunknownType = reject\n", "config.ini").unknownType.isNone
+    check parseConfig(DefaultConfig, "config.ini").unknownType.isNone
+
+  test "a bump level accepts them at that level":
+    check parseConfig("[commits]\nunknownType = patch\n", "config.ini").unknownType ==
+      some(blPatch)
+    check parseConfig("[commits]\nunknownType = ignore\n", "config.ini").unknownType ==
+      some(blIgnore)
+
+  test "anything else is rejected":
+    expect ValueError:
+      discard parseConfig("[commits]\nunknownType = bogus\n", "config.ini")
+
+  test "a listed type still wins over the fallback":
+    let config = parseConfig(
+      "[types]\nfeat = minor\n[commits]\nunknownType = patch\n", "config.ini"
+    )
+    check config.validateAndLookup(parseCommitMessage("feat: a").value) == some(blMinor)
+    check config.validateAndLookup(parseCommitMessage("net/http: a").value) ==
+      some(blPatch)
+
+  test "a breaking unknown type is still a major bump":
+    let config = parseConfig("[commits]\nunknownType = patch\n", "config.ini")
+    check config.validateAndLookup(parseCommitMessage("net/http!: a").value) ==
+      some(blMajor)
+
+  test "without the fallback an unknown type resolves to nothing":
+    let config = parseConfig("[types]\nfeat = minor\n", "config.ini")
+    check config.validateAndLookup(parseCommitMessage("net/http: a").value).isNone
+
 suite "workspace strategy":
   test "fixed and independent are both accepted":
     check parseConfig("[workspace]\nstrategy = fixed\n", "config.ini").workspaceStrategy ==

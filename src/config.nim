@@ -6,6 +6,11 @@ import ./commitparser
 const DefaultConfig* = """; nimver configuration
 ; see https://github.com/vinpogo/nimver for details
 
+; How to treat a type that is not listed below. `reject` refuses the commit;
+; any bump level accepts it and counts it at that level.
+; [commits]
+; unknownType = reject
+
 [types]
 feat = minor
 fix = patch
@@ -42,6 +47,7 @@ type
     packages*: seq[PackageConfig] = @[]
     workspaceStrategy*: WorkspaceStrategy = wsIndependent
     sharedChanges*: SharedChangesKind = scAll
+    unknownType*: Option[BumpLevel] = none(BumpLevel)
 
 const ConfigName* = "config.ini"
 const ConfigDir* = ".nimver"
@@ -91,6 +97,18 @@ func parseSharedChangesKind(value: string): SharedChangesKind =
   else:
     raise newException(ValueError, "Invalid shared changes kind: " & value)
 
+proc parseUnknownType(value: string): Option[BumpLevel] =
+  if value.strip().toLowerAscii() == "reject":
+    return none(BumpLevel)
+  try:
+    some(parseBumpLevel(value))
+  except ValueError:
+    raise newException(
+      ValueError,
+      "Invalid unknownType: " & value &
+        ". Expected reject, ignore, none, patch, minor or major.",
+    )
+
 func parseSourceFilePatterns(raw: string): seq[string] =
   raw.split(',').mapIt(it.strip()).filterIt(it.len > 0)
 
@@ -134,6 +152,8 @@ proc parseConfig*(contents, path: string): NimverConfig =
       .map(parseSharedChangesKind)
       .get(scAll),
     packages: parsePackages(userConfig),
+    unknownType:
+      userConfig.getValue("commits", "unknownType").map(parseUnknownType).flatten(),
   )
   validateWorkspaceConfig(result, path)
 
@@ -150,7 +170,7 @@ func lookupLevel(config: NimverConfig, commitType: string): Option[BumpLevel] =
   if key in config.types:
     some(config.types[key])
   else:
-    none(BumpLevel)
+    config.unknownType
 
 func validateAndLookup*(config: NimverConfig, parsed: ParsedCommit): Option[BumpLevel] =
   lookupLevel(config, parsed.commitType).map(

@@ -46,6 +46,18 @@ suite "hooks":
     check commitFile(dir, "a.txt", "hi", "fix!: breaking fix").code == 0
     check "-> 1.0.0 (major)" in pending(dir)
 
+  test "an unlisted type is accepted once unknownType names a level":
+    let dir = freshRepo("permissive-types")
+    check commitFile(dir, "a.txt", "hi", "net/http: rework the dialer").code != 0
+
+    let configFile = dir / ".nimver" / "config.ini"
+    writeFile(configFile, "[commits]\nunknownType = patch\n" & readFile(configFile))
+    discard run("git add -A", dir)
+    discard run("git commit -q -m \"chore: accept other conventions\"", dir)
+
+    check commitFile(dir, "b.txt", "hi", "net/http: rework the dialer").code == 0
+    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+
   test "the bump mapping comes from config.ini":
     let dir = freshRepo("config-driven")
     let configFile = dir / ".nimver" / "config.ini"
