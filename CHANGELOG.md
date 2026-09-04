@@ -1,5 +1,51 @@
 # Changelog
 
+## [4.0.0] - 2026-09-04
+
+### Breaking Changes
+- use commits as source of truth instead of change files
+- remove --no-commit and --no-tag options from `bump` command
+
+### Fixes
+- ignore wip commits
+- introducing packages correctly bounds the history for all packages
+- removing packages correctly bounds the history for the remaining package
+- empty strategy incorrectly parsed as value error
+
+### Refactoring
+- humanize the implementation
+- humanize parseCommitMessage
+- exract bump command
+- make entrypoint more readable
+- cleanup gitutils
+- cleanup checkCommitMsg
+- cleanup config.nim
+- make checkCommitMsg more readable
+- config.nim once again
+- split logic out from bump.nim
+- separate the history range from what a walk makes of it
+
+### Chores
+- fix mise.toml
+- remove leftovers from --no-commit and --no-tag removal
+- remove useless comments
+- hopefully make zed setup more stable
+- add lock file
+- trim AGENTS.md
+- now really better editor setup
+- drop mise
+- remove last traces of mise
+- pin actions
+
+### Tests
+- add tests for package addition/removal
+- add more test coverage
+- fix tests
+
+### Features
+- add test job
+- add npm package
+
 ## [3.0.0] - 2026-08-21
 
 ### Breaking Changes
