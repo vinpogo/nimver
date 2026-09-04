@@ -24,6 +24,33 @@ suite "history":
     check run("git commit --amend -q --no-edit", dir).code == 0
     check "0.1.0 -> 1.0.0 (major)" in pending(dir)
 
+  test "unknownType is read from each commit's own tree, like every other mapping":
+    # Turning the fallback on today does not retroactively make yesterday's
+    # unlisted types count, and turning it off does not un-count them.
+    let dir = freshRepo("history-unknown-types")
+    let configFile = dir / ".nimver" / "config.ini"
+
+    writeFile(dir / "a.txt", "hi")
+    discard run("git add -A", dir)
+    check run("git commit -q --no-verify -m \"net/http: slipped past the hook\"", dir).code ==
+      0
+
+    let strict = pending(dir)
+    check "unknown commit type 'net/http'" in strict
+    check "slipped past the hook" notin strict.split("---")[^1]
+
+    writeFile(configFile, "[commits]\nunknownType = minor\n" & readFile(configFile))
+    discard run("git add -A", dir)
+    discard run("git commit -q -m \"chore: accept other conventions\"", dir)
+    check commitFile(dir, "b.txt", "hi", "net/http: rework the dialer").code == 0
+
+    let permissive = pending(dir)
+    check "0.1.0 -> 0.2.0 (minor)" in permissive
+    check "rework the dialer" in permissive
+    # The earlier commit was made under a config that rejected it, and still is.
+    check "unknown commit type 'net/http'" in permissive
+    check "slipped past the hook" notin permissive.split("---")[^1]
+
   test "rewording during a rebase is picked up without touching the rebase":
     let dir = freshRepo("history-reword")
     discard commitFile(dir, "a.txt", "hi", "fix: a")

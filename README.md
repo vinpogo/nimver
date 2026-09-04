@@ -147,7 +147,7 @@ A breaking change will always be treated as a major bump.
 
 Each commit is read under the configuration *it* was made with, taken from its own tree — so changing a mapping today does not rewrite what last week's commits meant, and a package added mid-cycle cannot claim changes made before it existed.
 
-Any commit type not listed here is rejected by the `commit-msg` hook. Add your own types (and adjust bump levels) as needed.
+Any commit type not listed here is rejected by the `commit-msg` hook (this behavior can be adjusted, see [Allowing unknown types](#allowing-unknown-types) for details). Add your own types (and adjust bump levels) as needed.
 
 The default types are:
 
@@ -166,6 +166,16 @@ build = none
 ci = none
 version = ignore
 wip = ignore
+```
+
+### Allowing unknown types
+
+By default any type not listed under `[types]` is refused by the `commit-msg` hook,
+and skipped with a warning when a release reads the history back. You can instead allow unknown types to be treated as any of the standard types.
+
+```ini
+[commits]
+unknownType = patch   ; or reject (the default) | ignore | none | minor | major
 ```
 
 ## CLI reference
