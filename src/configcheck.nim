@@ -23,9 +23,13 @@ const
 
 const
   FixedSections = [TypesSection, WorkspaceSection, CommitsSection]
-  WorkspaceKeys = [StrategyKey, SharedChangesKey]
-  CommitsKeys = [UnknownTypeKey]
-  PackageKeys = [ManifestKey, SourceFilesKey]
+  # Sequences rather than arrays: `knownKeys` hands one back, and converting a
+  # constant array with `@` inside an `if` expression miscompiles on the JS
+  # backend (`nimCopy` is handed nothing to copy).
+  WorkspaceKeys = @[StrategyKey, SharedChangesKey]
+  CommitsKeys = @[UnknownTypeKey]
+  PackageKeys = @[ManifestKey, SourceFilesKey]
+  NoKeys = newSeq[string]()
 
 const SectionSymbolChars =
   {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '_', ' ', '\x80' .. '\xFF', '.', '/', '\\', '-'}
@@ -131,13 +135,13 @@ func suggestedSection(section: string): string =
 
 func knownKeys(section: string): seq[string] =
   if section == WorkspaceSection:
-    @WorkspaceKeys
+    WorkspaceKeys
   elif section == CommitsSection:
-    @CommitsKeys
+    CommitsKeys
   elif section.startsWith(PackagePrefix):
-    @PackageKeys
+    PackageKeys
   else:
-    @[] # `[types]`, whose keys are the commit types the repository uses.
+    NoKeys # `[types]`, whose keys are the commit types the repository uses.
 
 proc checkUnquotedGlobs(userConfig: Config, path: string) =
   ## Checked before anything else about a key: an unquoted `*` in a *value*
