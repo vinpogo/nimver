@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.0.0] - 2026-09-18
+
+### Breaking Changes
+- a package name containing a space or a backslash was accepted before and is now refused when the config is read. Such a name only ever worked in a `fixed` workspace or as a lone package, where it never reached a tag; rename the package and re-tag its last release under the new name.
+- a configuration with an unknown section or setting, a setting written before any section, or a line that does not parse is now refused instead of quietly ignored. A `[package.<name>]` section with no settings at all is likewise an error - a package missing its manifest - rather than a package silently dropped.
+
+### Commits
+- build(ci): drop macos amd64 release target
+- feat(config): accept scoped package names
+- fix(config)!: reject package names a release cannot use
+- fix(config)!: check a configuration before reading meaning into it
+- fix(config): keep the checker working on the Node bundle
+
 ## [4.1.0] - 2026-09-04
 
 - UPPERCASE, /, -, _ and numbers characters are now supported for commit types, scopes can additionally contain . and , .
