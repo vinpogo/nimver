@@ -65,7 +65,7 @@ func footerValue(
 
 const
   TypeChars = {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '-', '_', '/'}
-  ScopeChars = TypeChars + {'.', ','}
+  ScopeChars* = TypeChars + {'.', ',', '@'}
 
 func isMadeOf(text: string, allowed: set[char]): bool =
   text.len > 0 and text.allCharsInSet(allowed)

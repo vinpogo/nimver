@@ -291,3 +291,53 @@ suite "workspace strategies":
     check "Bumping alpha: 0.1.0 -> 0.1.1 (patch)" in dryRun
     check "Bumping beta" notin dryRun
     check "shared change" notin dryRun
+
+suite "scoped package names":
+  ## An npm workspace names its packages `@scope/name`, and that name is what
+  ## the tag, the release commit's scope and the changelog heading are spelled
+  ## with. The `@` is what makes it worth its own suite: it reaches the ini
+  ## parser, `git tag`, and nimver's own commit-msg hook on the way through.
+
+  test "a scoped package releases under its full name":
+    let dir =
+      freshWorkspaceRepo("scoped-bump", strategy = "independent", namePrefix = "@acme/")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump @acme/web", dir)
+    check code == 0
+    check "Bumping @acme/web: 0.1.0 -> 0.2.0 (minor)" in output
+
+    # The release commit carries the name as its scope, so it has to survive the
+    # commit-msg hook the fixture installed.
+    let (subject, _) = run("git log -1 --pretty=%s", dir)
+    check subject.strip() == "version(@acme/web): v0.2.0"
+    let (tags, _) = run("git tag", dir)
+    check "@acme/web-v0.2.0" in tags
+    check "\"version\": \"0.2.0\"" in readFile(
+      dir / "packages" / "web" / "package.json"
+    )
+
+  test "a scoped release tag is found again on the next bump":
+    let dir = freshWorkspaceRepo(
+      "scoped-tag-read-back", strategy = "independent", namePrefix = "@acme/"
+    )
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    check run("nimver bump @acme/web", dir).code == 0
+    check "Nothing to bump" in pending(dir, "@acme/web")
+
+    # And a change made after the tag is pending again, so the tag ended the
+    # range rather than hiding the package.
+    discard commitFile(dir, "packages/web/other.js", "export {}\n", "fix: fix web")
+    check "Bumping @acme/web: 0.2.0 -> 0.2.1 (patch)" in pending(dir, "@acme/web")
+
+  test "the name has to be given in full, scope and all":
+    let dir = freshWorkspaceRepo(
+      "scoped-unknown", strategy = "independent", namePrefix = "@acme/"
+    )
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+
+    let (output, code) = run("nimver bump web", dir)
+    check code != 0
+    check "Unknown package 'web'" in output
+    check "@acme/web, @acme/cli" in output

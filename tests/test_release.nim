@@ -126,6 +126,27 @@ suite "naming a release of one package among several":
       @[release("web", "0.2.0", blMinor), release("cli", "0.1.1", blPatch)]
     ) == "version: web-v0.2.0, cli-v0.1.1"
 
+suite "naming a release of a scoped package":
+  ## The scope belongs to the name, so it belongs to everything the name spells:
+  ## the tag, the commit subject and the progress line.
+  let scoped = workspaceOf(@["@acme/widgets", "@acme/cli"])
+
+  test "the progress line names the package in full":
+    check scoped.releaseLabelFor(release("@acme/widgets", "0.2.0", blMinor)) ==
+      "@acme/widgets"
+
+  test "the commit subject scopes itself to the package":
+    check scoped.releaseCommitSubject(@[release("@acme/widgets", "0.2.0", blMinor)]) ==
+      "version(@acme/widgets): v0.2.0"
+
+  test "several scoped packages at once list their tags":
+    check scoped.releaseCommitSubject(
+      @[
+        release("@acme/widgets", "0.2.0", blMinor),
+        release("@acme/cli", "0.1.1", blPatch),
+      ]
+    ) == "version: @acme/widgets-v0.2.0, @acme/cli-v0.1.1"
+
 suite "naming a release the whole repository shares":
   ## A lone package has nothing to distinguish itself from, and a fixed
   ## workspace moves every package together, so neither names a package.

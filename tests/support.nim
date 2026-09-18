@@ -121,12 +121,20 @@ proc freshPackageRepo*(name: string): string =
   initNimver(result)
 
 proc freshWorkspaceRepo*(
-    name: string, sharedChanges = "all", includeRootPackage = false, strategy = "fixed"
+    name: string,
+    sharedChanges = "all",
+    includeRootPackage = false,
+    strategy = "fixed",
+    namePrefix = "",
 ): string =
   ## A workspace with package.json and Nimble packages at version 0.1.0.
   ## With `includeRootPackage`, a repository-root Nimble package is added too,
   ## which acts as an ancestor of the nested packages. An empty `strategy`
   ## leaves the setting out of the config entirely, exercising the default.
+  ##
+  ## `namePrefix` goes in front of every declared package name - `@acme/` makes
+  ## the workspace a scoped one. The directories keep their plain names, so
+  ## attribution is the same workspace either way.
   result = TestRepoRoot / name
   resetDir(result)
   createDir(result / "packages" / "web")
@@ -160,10 +168,14 @@ proc freshWorkspaceRepo*(
   # swallowed by Nim, which silently joins interpolated ini lines.
   let workspaceConfig =
     "\n[workspace]\n" & (if strategy.len > 0: "strategy = " & strategy & "\n"
-    else: "") & "sharedChanges = " & sharedChanges & "\n" &
-    "\n[package.web]\nmanifest = packages/web/package.json\n" &
-    "\n[package.cli]\nmanifest = packages/cli/cli.nimble\n" &
-    (if includeRootPackage: "\n[package.root]\nmanifest = root.nimble\n" else: "")
+    else: "") & "sharedChanges = " & sharedChanges & "\n" & "\n[package." & namePrefix &
+    "web]\nmanifest = packages/web/package.json\n" & "\n[package." & namePrefix &
+    "cli]\nmanifest = packages/cli/cli.nimble\n" & (
+      if includeRootPackage:
+        "\n[package." & namePrefix & "root]\nmanifest = root.nimble\n"
+      else:
+        ""
+    )
   writeFile(configPath, readFile(configPath) & workspaceConfig)
 
   # `--no-verify` keeps the config commit itself out of the pending changes.
