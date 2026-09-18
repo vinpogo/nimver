@@ -34,6 +34,12 @@ nimver install-hooks
 `init` creates `.nimver/config.ini`, pre-populated with sensible defaults.
 `install-hooks` writes a `commit-msg` hook into `.git/hooks/` that delegates to this binary, rejecting messages a release would not be able to read. `.nimver/` should be committed to Git.
 
+The config is checked before it is used: an unknown section or setting, a
+setting written above any section, or a line that does not parse is an error
+naming what it found and the nearest thing it knows. A misspelled
+`[packages.web]` would otherwise leave a workspace with no packages, which reads
+exactly like a repository that never declared any.
+
 ## Everyday use
 
 Just commit normally, using [Conventional Commits syntax](https://www.conventionalcommits.org/):

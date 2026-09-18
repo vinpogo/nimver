@@ -2,7 +2,7 @@
 ## types, workspace strategy and packages, and which malformed ones it refuses
 ## rather than quietly reading as something else.
 
-import std/[unittest, options, tables]
+import std/[unittest, options, strutils, tables]
 import config
 import commitparser
 import semver
@@ -229,8 +229,10 @@ sourceFiles = "packages/web/**, docs/**"
         "[package.web]\nmanifests = packages/web/package.json\n", "config.ini"
       )
 
-  test "a package section with no keys at all is dropped by the ini parser":
-    check parseConfig("[package.web]\n", "config.ini").packages.len == 0
+  test "a package section with no keys at all is a package missing its manifest":
+    # Not "a package nobody declared": the section is there to be read.
+    expect IOError:
+      discard parseConfig("[package.web]\n", "config.ini")
 
   test "the same package section twice is merged, the last manifest winning":
     let parsed = parseConfig(
@@ -334,3 +336,100 @@ suite "package names":
         "[package.\"@acme/widgets\"]\nmanifest = packages/a/package.json\n",
         "config.ini",
       )
+
+suite "configurations that say nothing nimver can act on":
+  ## A mistake in a config file is otherwise a silence rather than an error, and
+  ## a workspace that lost its packages reads exactly like one that never
+  ## declared any - which releases the wrong thing instead of saying so.
+
+  test "an unknown section is rejected, with the nearest known one named":
+    let message = (
+      try:
+        discard parseConfig("[packages.web]\nmanifest = a/package.json\n", "config.ini")
+        ""
+      except IOError as failure:
+        failure.msg
+    )
+    check "Unknown section [packages.web]" in message
+    check "did you mean [package.web]?" in message
+
+  test "a section nothing resembles lists what there is":
+    let message = (
+      try:
+        discard parseConfig("[notes]\nfoo = bar\n", "config.ini")
+        ""
+      except IOError as failure:
+        failure.msg
+    )
+    check "Unknown section [notes]" in message
+    check "[package.<name>]" in message
+
+  test "a section spelled in the wrong case is rejected rather than ignored":
+    for section in ["[Workspace]\nstrategy = fixed\n", "[Types]\nfeat = minor\n"]:
+      expect IOError:
+        discard parseConfig(section, "config.ini")
+
+  test "an unknown setting is rejected, with the nearest known one named":
+    let message = (
+      try:
+        discard parseConfig(
+          "[package.web]\nmanifest = a/package.json\nsourceFile = \"a/**\"\n",
+          "config.ini",
+        )
+        ""
+      except IOError as failure:
+        failure.msg
+    )
+    check "Unknown setting 'sourceFile'" in message
+    check "did you mean 'sourceFiles'?" in message
+
+  test "a commit type is any word, so [types] takes any setting":
+    check parseConfig("[types]\nwhatever = patch\n", "config.ini").types.len == 1
+
+  test "a setting written before any section is rejected":
+    expect IOError:
+      discard parseConfig("strategy = fixed\n\n[types]\nfeat = minor\n", "config.ini")
+
+  test "a line that does not parse is an error, not a shorter file":
+    # parsecfg answers a malformed line by dropping the rest of the file.
+    let message = (
+      try:
+        discard parseConfig(
+          "[types]\nfeat = minor\n\n[workspace\nstrategy = fixed\n", "config.ini"
+        )
+        ""
+      except IOError as failure:
+        failure.msg
+    )
+    check "Could not read config.ini" in message
+
+suite "section headers written loosely":
+  ## Whitespace and quoting around a header are the ini file's business, not the
+  ## package name's - and a header that is misread costs a whole package.
+
+  test "padding inside the brackets is not part of the name":
+    for header in [
+      "[package.web]", "[package.web ]", "[ package.web]", "[\"package.web\"]",
+      "[\"package.web\" ]", "[ \"package.web\"]",
+    ]:
+      let parsed =
+        parseConfig(header & "\nmanifest = packages/web/package.json\n", "config.ini")
+      check parsed.packages.len == 1
+      check parsed.packages[0].name == "web"
+
+  test "padding around a scoped name is not part of the name either":
+    for header in [
+      "[package.@acme/web]", "[package.@acme/web ]", "[ package.@acme/web]",
+      "[\"package.@acme/web\"]", "[ \"package.@acme/web\" ]",
+    ]:
+      let parsed =
+        parseConfig(header & "\nmanifest = packages/web/package.json\n", "config.ini")
+      check parsed.packages.len == 1
+      check parsed.packages[0].name == "@acme/web"
+
+  test "an indented section is still a section":
+    let parsed = parseConfig(
+      "  [package.@acme/web]\n  manifest = packages/web/package.json\n", "config.ini"
+    )
+    check parsed.packages.len == 1
+    check parsed.packages[0].name == "@acme/web"
