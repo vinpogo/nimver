@@ -84,6 +84,14 @@ suite "type and scope spelling":
     check parsed.value.scope == "web,cli.core"
     check parsed.value.breaking == true
     check isSuccess(parseCommitMessage("fe.at: this is a test")) == false
+  test "an at sign in a scope, but not in a type":
+    # A scoped npm package is a package name here, and `bump` puts it in the
+    # scope of the release commit it then asks this parser to accept.
+    let parsed = parseCommitMessage("feat(@acme/widgets): this is a test")
+    check isSuccess(parsed) == true
+    check parsed.value.commitType == "feat"
+    check parsed.value.scope == "@acme/widgets"
+    check isSuccess(parseCommitMessage("@feat: this is a test")) == false
   test "the subject keeps every colon after the first":
     let parsed = parseCommitMessage("docs: note: mind the gap")
     check isSuccess(parsed) == true

@@ -132,6 +132,67 @@ manifest = packages/cli/cli.nimble
     check parsed.packages[1].name == "cli"
     check parsed.packages[1].manifestPath == "packages/cli/cli.nimble"
 
+  test "a scoped npm name needs no quoting, the way it is written in package.json":
+    let parsed = parseConfig(
+      """
+[package.@acme/widgets]
+manifest = packages/widgets/package.json
+""",
+      "config.ini",
+    )
+    check parsed.packages.len == 1
+    check parsed.packages[0].name == "@acme/widgets"
+    check parsed.packages[0].manifestPath == "packages/widgets/package.json"
+
+  test "a scoped section does not swallow the rest of the file":
+    # `loadConfig` answers a parse error by dropping everything after it, so a
+    # header it cannot lex used to cost the whole configuration, silently.
+    let parsed = parseConfig(
+      """
+[package.@acme/widgets]
+manifest = packages/widgets/package.json
+
+[package.cli]
+manifest = packages/cli/cli.nimble
+
+[types]
+feat = minor
+""",
+      "config.ini",
+    )
+    check parsed.packages.len == 2
+    check parsed.packages[1].name == "cli"
+    check parsed.types["feat"] == blMinor
+
+  test "a quoted section header still names the same package":
+    let parsed = parseConfig(
+      "[\"package.@acme/widgets\"]\nmanifest = packages/widgets/package.json\n",
+      "config.ini",
+    )
+    check parsed.packages.len == 1
+    check parsed.packages[0].name == "@acme/widgets"
+
+  test "a commented-out scoped section stays a comment":
+    check parseConfig(
+      "; [package.@acme/widgets]\n; manifest = packages/widgets/package.json\n",
+      "config.ini",
+    ).packages.len == 0
+
+  test "a comment after a scoped header is not read as part of the name":
+    let parsed = parseConfig(
+      "[package.@acme/widgets] ; the one with the buttons\nmanifest = packages/widgets/package.json\n",
+      "config.ini",
+    )
+    check parsed.packages.len == 1
+    check parsed.packages[0].name == "@acme/widgets"
+
+  test "an unquoted glob is still rejected inside a scoped section":
+    expect IOError:
+      discard parseConfig(
+        "[package.@acme/widgets]\nmanifest = packages/widgets/package.json\nsourceFiles = packages/widgets/**\n",
+        "config.ini",
+      )
+
   test "sourceFiles is a comma-separated list of patterns":
     let parsed = parseConfig(
       """

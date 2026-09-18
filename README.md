@@ -88,6 +88,7 @@ sourceFiles = "src/cli/src/**"
 
 `sourceFiles` is optional per package, see [Change attribution](#change-attribution).
 
+
 ### Strategy
 
 The strategy controls how versioning is handled for the packages. There are two strategies: `independent` and `fixed`.
@@ -114,7 +115,8 @@ A changelog lives next to its manifest, so where you put manifests decides how m
   written beside the manifest, with plain `## [1.2.0]` headings.
 - **Several manifests in the same directory** (including the repository root) —
   those packages share the one `CHANGELOG.md` in that directory, and each
-  section names its package: `## [web 1.2.0]`.
+  section names its package: `## [web 1.2.0]`, or `## [@acme/widgets 1.2.0]`
+  for a scoped one.
 
 ### Change attribution
 

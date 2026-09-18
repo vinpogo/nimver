@@ -139,8 +139,43 @@ proc parsePackages(userConfig: Config): seq[PackageConfig] =
             userConfig.getValue(section, "sourceFiles").map(parseSourceFilePatterns),
         )
 
+const SectionSymbolChars =
+  {'a' .. 'z', 'A' .. 'Z', '0' .. '9', '_', ' ', '\x80' .. '\xFF', '.', '/', '\\', '-'}
+  ## What `std/parsecfg` lexes as one unquoted symbol - its own `SymChars`,
+  ## which it does not export. A header made only of these already parses.
+
+func quotedSectionHeader(line: string): string =
+  ## A section name outside `SectionSymbolChars` - `[package.@acme/widgets]` -
+  ## does not lex as one token, and `loadConfig` answers a parse error by
+  ## dropping the rest of the file without a word. Quoting the header first
+  ## turns it into a string literal, which parsecfg does accept. Headers that
+  ## already parse are returned untouched, so only what is broken today changes.
+  let open = line.find('[')
+  if open == -1 or line[0 ..< open].strip().len > 0:
+    return line
+  let close = line.find(']', open + 1)
+  if close == -1:
+    return line
+  let inner = line[open + 1 ..< close]
+  let rest = line[close + 1 .. ^1]
+  let trailing = rest.strip()
+  if trailing.len > 0 and trailing[0] notin {';', '#'}:
+    # Not a header after all, or one parsecfg would reject anyway. Left alone so
+    # it fails the way it does today rather than in some new way.
+    return line
+  if inner.len == 0 or inner.allCharsInSet(SectionSymbolChars) or
+      (inner.len > 1 and inner.startsWith('"') and inner.endsWith('"')):
+    return line
+  # `getString` unescapes `\\` and `\"`, so escaping both round-trips any name.
+  line[0 ..< open] & "[\"" & inner.multiReplace(("\\", "\\\\"), ("\"", "\\\"")) & "\"]" &
+    rest
+
+func quoteSectionHeaders(contents: string): string =
+  # Split on `\n` rather than by lines: a `\r` stays where it was.
+  contents.split('\n').mapIt(it.quotedSectionHeader()).join("\n")
+
 proc parseConfig*(contents, path: string): NimverConfig =
-  let userConfig = loadConfig(newStringStream(contents), path)
+  let userConfig = loadConfig(newStringStream(contents.quoteSectionHeaders()), path)
   checkForUnquotedGlobs(userConfig, path)
   let strategy = userConfig.getValue("workspace", "strategy")
   result = NimverConfig(
