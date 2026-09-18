@@ -56,11 +56,45 @@ const ConfigRelPath* = ConfigDir / ConfigName
 func configPath*(repoRoot: string): string =
   repoRoot / ConfigRelPath
 
+const PackageNameChars = ScopeChars
+  ## A package name is released under a tag of its own and becomes the scope of
+  ## the release commit, so it has to be spellable as both. Taking the commit
+  ## scope's character set is the tighter of the two, and rules out everything
+  ## `git check-ref-format` refuses along the way.
+
+func packageNameProblem(name: string): string =
+  ## What is wrong with a name, phrased to follow "a name ...". Empty when
+  ## nothing is.
+  if not name.allCharsInSet(PackageNameChars):
+    return "may only contain letters, digits and `@ . , - _ /`"
+  if name.startsWith('-'):
+    return "must not start with `-`, which `git tag` would read as an option"
+  if ".." in name:
+    return "must not contain `..`"
+  if name == "@":
+    return "must not be a bare `@`"
+  for part in name.split('/'):
+    if part.len == 0:
+      return "must not contain an empty part between slashes"
+    if part.startsWith('.'):
+      return "must not contain a part starting with `.`"
+    if part.endsWith(".lock"):
+      return "must not contain a part ending in `.lock`"
+  ""
+
 proc validateWorkspaceConfig(config: NimverConfig, path: string) =
   var seenNames, seenManifests = initHashSet[string]()
   for package in config.packages:
     if package.name.len == 0:
       raise newException(IOError, "Package name cannot be empty in " & path)
+    let nameProblem = packageNameProblem(package.name)
+    if nameProblem.len > 0:
+      raise newException(
+        IOError,
+        "Invalid package name '" & package.name & "' in " & path & ": a name " &
+          nameProblem & ". It is released as the tag `" & package.name &
+          "-v1.2.3` and names itself in the release commit.",
+      )
     if package.manifestPath.len == 0:
       raise newException(
         IOError, "Package '" & package.name & "' is missing manifest in " & path

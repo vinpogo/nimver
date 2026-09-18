@@ -290,3 +290,47 @@ suite "looking up a commit's level":
 
   test "breaking does not rescue an unmapped type":
     check parsed.validateAndLookup(ParsedCommit(commitType: "style", breaking: true)).isNone
+
+suite "package names":
+  ## A name is released as a tag and names itself in the release commit, so one
+  ## that neither can spell is refused where it is written rather than halfway
+  ## through a release.
+
+  proc parsePackage(packageName: string): NimverConfig =
+    parseConfig(
+      "[package." & packageName & "]\nmanifest = packages/a/package.json\n",
+      "config.ini",
+    )
+
+  test "a name a tag and a commit can both spell is accepted":
+    for packageName in [
+      "@acme/widgets", "web", "package.json", "cli.nimble", "root", "web,cli"
+    ]:
+      check parsePackage(packageName).packages[0].name == packageName
+
+  test "a character neither a tag nor a commit scope allows is rejected":
+    for packageName in ["my package", "web*", "we~b", "web:cli", "web(cli)", "web\\cli"]:
+      expect IOError:
+        discard parsePackage(packageName)
+
+  test "a name git would refuse as a ref is rejected":
+    for packageName in [
+      "a..b", "@acme//widgets", "/widgets", "widgets/", ".hidden", "a/.b", "a.lock/b"
+    ]:
+      expect IOError:
+        discard parsePackage(packageName)
+
+  test "a name git tag would read as an option is rejected":
+    expect IOError:
+      discard parsePackage("-widgets")
+
+  test "a bare at sign is rejected":
+    expect IOError:
+      discard parsePackage("@")
+
+  test "a half-quoted header is a name with quotes in it, and is rejected":
+    expect IOError:
+      discard parseConfig(
+        "[package.\"@acme/widgets\"]\nmanifest = packages/a/package.json\n",
+        "config.ini",
+      )
