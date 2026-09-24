@@ -1,5 +1,19 @@
 # Changelog
 
+## [5.1.0] - 2026-09-24
+
+- Setting up nimver now requires a git tag to detect commit ranges. This also includes setup for new packages in an independently versioned monorepo.
+- Transitioning from 0.x to 1.0.0 is now a dedicated decision using a `--stable` flag. This works for a plain `bump` and via tracks. See README to learn more.
+
+### tracks
+- Nimver now supports release tracks via the `nimver track` command and it's sub command. Refer to the README to learn more.
+
+### Commits
+- chore(ci): link changelog in releases
+- feat(tracks): support prerelease release tracks
+- fix: require a baseline release tag before bumping
+- feat: support stable releases below 1.0.0
+
 ## [5.0.0] - 2026-09-18
 
 ### Breaking Changes

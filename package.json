@@ -1,6 +1,6 @@
 {
   "name": "@vingy/nimver",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "A package to manage semantic versioning from commit messages",
   "keywords": [
     "semver",
