@@ -110,37 +110,46 @@ suite "a track from end to end":
     discard commitFile(dir, "b.txt", "hi", "docs: b")
     let output = run("nimver bump", dir).output
     check "Nothing to bump" in output
-    check tags(dir).len == 2
+    check tags(dir).len == 3
 
 suite "a track needs a release to build on":
-  test "a repository with no release tag is warned on entering, and refused on the second bump":
+  test "a repository with no release tag is warned on entering, and refused on the bump":
     let dir = freshRepo("track-without-a-release")
+    discard run("git tag -d v0.1.0", dir)
     let entered = setTrack(dir, "enter alpha")
     check entered.code == 0
     check "no release tag" in entered.output
     check "git tag v0.1.0" in entered.output
 
-    # The first prerelease still works: the manifest is a release version, so
-    # it is still a base.
     discard commitFile(dir, "a.txt", "hi", "feat: a")
-    check run("nimver bump", dir).code == 0
-    check "v0.2.0-alpha.1" in tags(dir)
-
-    # The second cannot: the manifest was the only record of the base, and the
-    # first prerelease overwrote it.
-    discard commitFile(dir, "b.txt", "hi", "fix: b")
     let refused = run("nimver bump", dir)
     check refused.code != 0
     check "no release tag" in refused.output
-    check "git tag v<version>" in refused.output
-      # not `pkg-v`, which is not this repo's shape
+    check "git tag v0.1.0" in refused.output
+      # not `pkg-v0.1.0`, which is not this repo's shape
 
-  test "tagging the release it builds on is what fixes it":
-    let dir = freshRepo("track-tagging-fixes-it")
+  test "a prerelease manifest leaves no version to advise tagging":
+    # Once the first prerelease is written the manifest is no record of
+    # anything that went out, so the advice has to fall back to a placeholder.
+    let dir = freshRepo("track-prerelease-manifest-no-advice")
+    discard run("git tag -d v0.1.0", dir)
     check setTrack(dir, "enter alpha").code == 0
-    discard run("git tag v0.1.0", dir)
-    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    writeFile(dir / "pkg.nimble", "version = \"0.2.0-alpha.1\"\n")
+    discard commitFile(dir, "a.txt", "hi", "fix: b")
 
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    check "track 'alpha'" in refused.output
+    check "git tag v<version>" in refused.output
+
+  test "tagging the version it is already on is what fixes it":
+    let dir = freshRepo("track-tagging-fixes-it")
+    discard run("git tag -d v0.1.0", dir)
+    check setTrack(dir, "enter alpha").code == 0
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check run("nimver bump", dir).code != 0
+
+    discard run("git tag v0.1.0 HEAD~1", dir)
     check run("nimver bump", dir).code == 0
     check "v0.1.1-alpha.1" in tags(dir)
 

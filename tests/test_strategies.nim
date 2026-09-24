@@ -28,8 +28,7 @@ suite "workspace strategies":
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.2.0"
-    let (tags, _) = run("git tag", dir)
-    check tags.strip() == "v0.2.0"
+    check tags(dir) == @["v0.1.0", "v0.2.0"]
 
   test "fixed workspace bump rejects divergent manifest versions":
     let dir = freshWorkspaceRepo("workspace-divergent")
@@ -162,8 +161,7 @@ suite "workspace strategies":
     # A lone released package keeps the package-scoped subject and single tag.
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version(web): v0.2.0"
-    let (tags, _) = run("git tag", dir)
-    check tags.strip() == "web-v0.2.0"
+    check tags(dir) == @["v0.1.0", "web-v0.2.0"]
 
   test "independent bump releases a shared change for every package at once":
     let dir = freshWorkspaceRepo("independent-all-shared", strategy = "independent")

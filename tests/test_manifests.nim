@@ -123,8 +123,7 @@ suite "manifest adapters":
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.1.1"
-    let (tags, _) = run("git tag", dir)
-    check tags.strip() == "v0.1.1"
+    check tags(dir) == @["v0.1.0", "v0.1.1"]
 
   test "sibling manifests are released separately when the strategy is independent":
     # An explicit strategy is honoured rather than overridden, but detected
@@ -162,7 +161,6 @@ suite "manifest adapters":
     )
     discard run("git add pkg.nimble", dir)
     discard run("git commit -q --no-verify -m \"chore: format manifest\"", dir)
-    discard run("git tag v0.1.0", dir)
     check run("nimver track enter alpha", dir).code == 0
     discard commitFile(dir, "a.txt", "hi", "fix: patch")
 
@@ -173,7 +171,6 @@ suite "manifest adapters":
 
   test "a prerelease version is written into package.json":
     let dir = freshPackageRepo("prerelease-package-json")
-    discard run("git tag v0.1.0", dir)
     check run("nimver track enter rc", dir).code == 0
     discard commitFile(dir, "a.txt", "hi", "feat: a feature")
 
@@ -186,7 +183,6 @@ suite "manifest adapters":
     # Not from its own core: 0.2.0-rc.1 already is the result of bumping 0.1.0,
     # so paying for the same minor twice would give 0.3.0.
     let dir = freshPackageRepo("prerelease-base")
-    discard run("git tag v0.1.0", dir)
     check run("nimver track enter rc", dir).code == 0
     discard commitFile(dir, "a.txt", "hi", "feat: a feature")
     check run("nimver bump", dir).code == 0

@@ -80,11 +80,11 @@ func versionPart(naming: ReleaseNaming, tagName: string): Option[string] =
   if result.isNone() and naming.legacyPrefix.len > 0:
     result = tagName.afterPrefix(naming.legacyPrefix)
 
-func tagVersion*(naming: ReleaseNaming, tagName: string): Option[SemVer] =
-  ## The version a tag names, when it can be read at all. `v1.0`, `v2` and
-  ## `v20240101` are version tags of this package that nobody can read a
-  ## `major.minor.patch` out of - they still bound a range, they just cannot be
-  ## a base.
+func tagVersion(naming: ReleaseNaming, tagName: string): Option[SemVer] =
+  ## The version a tag names, when it names one at all. `v1.0`, `v2` and
+  ## `v20240101` carry this package's prefix and a digit and still yield
+  ## nothing: nimver did not write them, and it cannot say which
+  ## `major.minor.patch` they stand for.
   let written = naming.versionPart(tagName)
   if written.isNone():
     return none(SemVer)
@@ -93,44 +93,42 @@ func tagVersion*(naming: ReleaseNaming, tagName: string): Option[SemVer] =
   except ValueError:
     none(SemVer)
 
-func endsRange*(
+func endsRange(
     naming: ReleaseNaming, tagName: string, boundary: VersionBoundary
-): bool =
-  ## Bounding a range and reading a version are two questions. A tag whose
-  ## version cannot be parsed still bounds one, exactly as it did before tracks
-  ## existed - deciding otherwise would unbound such a repository and make its
-  ## next release swallow the whole history.
-  if naming.versionPart(tagName).isNone():
-    return false
+): Option[SemVer] =
+  ## The version a tag ends the range at, or nothing when it does not end it.
+  ##
+  ## Bounding a range and reading a version used to be two questions, so that a
+  ## tag nobody could parse still stopped a walk. It is one question now: a
+  ## boundary nimver cannot name a base for is only an invitation to guess one,
+  ## and a repository marked with nothing else is untagged as far as a release
+  ## is concerned - which `bump` says out loud rather than working around.
+  let version = naming.tagVersion(tagName)
+  if version.isNone():
+    return none(SemVer)
   case boundary
   of vbAnyVersion:
-    true
+    version
   of vbRelease:
-    let version = naming.tagVersion(tagName)
-    version.isNone() or not version.get.isPrerelease()
-
-type RangeEnd = tuple[ends: bool, version: Option[SemVer]]
-  ## `ends` without a `version` is a tag that bounds the range but whose
-  ## version nobody can read - the two questions are kept apart on purpose, so
-  ## an unreadable boundary can never be mistaken for a base of 0.0.0.
+    if version.get.isPrerelease():
+      none(SemVer)
+    else:
+      version
 
 func endsTheRange(
     naming: ReleaseNaming,
     record: CommitRecord,
     tagsByCommit: Table[string, seq[string]],
     boundary: VersionBoundary,
-): RangeEnd =
-  ## A commit may carry several tags; a readable one wins, so `v1.2.0` alongside
-  ## an unparseable sibling still yields a base.
-  result = (ends: false, version: none(SemVer))
+): Option[SemVer] =
+  ## A commit may carry several tags, and the first of them that ends the range
+  ## decides. Nothing is lost by stopping there: a tag that ends a range now
+  ## always carries the version it ends it at.
   for tagName in tagsByCommit.getOrDefault(record.hash):
-    if not naming.endsRange(tagName, boundary):
-      continue
-    result.ends = true
-    let version = naming.tagVersion(tagName)
+    let version = naming.endsRange(tagName, boundary)
     if version.isSome():
-      result.version = version
-      return
+      return version
+  none(SemVer)
 
 proc snapshotAt(repoRoot, revision: string, currentConfig: NimverConfig): Snapshot =
   ## How the repository stood at a commit, read from that commit's own tree.
@@ -220,9 +218,9 @@ proc commitsSinceLastVersion(
   ## settled before the walk begins.
   let tagsByCommit = gitTagsByCommit(repoRoot)
   for record in gitCommitsIn(repoRoot, "HEAD"):
-    let rangeEnd = naming.endsTheRange(record, tagsByCommit, boundary)
-    if rangeEnd.ends:
-      result.boundaryVersion = rangeEnd.version
+    let boundaryVersion = naming.endsTheRange(record, tagsByCommit, boundary)
+    if boundaryVersion.isSome():
+      result.boundaryVersion = boundaryVersion
       return
     result.records.add(record)
 
@@ -230,9 +228,9 @@ type PendingChanges* = object
   entries*: seq[ChangeEntry] ## Oldest first - the order a changelog reads in.
   boundaryVersion*: Option[SemVer]
     ## The version of the tag the walk stopped at, and the only thing a base may
-    ## be taken from. None for two different reasons: the walk ran out of
-    ## history without meeting a tag, or it stopped at one whose version cannot
-    ## be read. Neither can serve as a base.
+    ## be taken from. None means the walk ran out of history without meeting a
+    ## version tag at all - there is no release behind these changes, and
+    ## nothing to guess one from.
 
 proc pendingChanges*(
     repoRoot: string,
@@ -244,10 +242,11 @@ proc pendingChanges*(
   ## oldest first - the order a changelog section reads in.
   ##
   ## The range ends at the first commit going back that such a version went out
-  ## with, whether that shows as a tag or as the release commit itself. With
-  ## neither to be found the whole history counts, which is what a first release
-  ## wants - and what a repository adopting nimver later bounds by tagging the
-  ## version it is already on.
+  ## with. With none to be found the walk covers the whole history and
+  ## `boundaryVersion` stays empty, which is no release anyone can plan: the
+  ## version in the manifest already accounts for that history, so the planner
+  ## refuses rather than counting it a second time. A repository adopting
+  ## nimver says where its past ends by tagging the version it is already on.
   ##
   ## Nothing subtler than that on purpose. Cutting the range at, say, the
   ## commit that introduced `.nimver/config.ini` reads well until a rebase

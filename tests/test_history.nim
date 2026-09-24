@@ -135,11 +135,11 @@ suite "history":
     check "0.2.0 -> 0.2.1 (patch)" in dryRun
     check "- a" notin dryRun # already released
 
-  test "a tag bounds the history a repository adopting nimver brings with it":
-    # Without a release to stop at, a first release counts everything - so a
-    # repository with a past says where that past ends by tagging the version
-    # it is already on. Deliberately the only such marker: anything cleverer
-    # can be reordered out from under itself.
+  test "a repository adopting nimver is refused until it says where its past ends":
+    # Without a release to stop at there is nothing to bump from: the manifest
+    # version already accounts for that past, so counting it again would charge
+    # for the same changes twice. Saying where it ends is a tag and nothing
+    # else - anything cleverer can be reordered out from under itself.
     let dir = TestRepoRoot / "history-pre-nimver"
     removeDir(dir)
     createDir(dir)
@@ -152,7 +152,11 @@ suite "history":
 
     check run("nimver init", dir).code == 0
     check run("nimver install-hooks", dir).code == 0
-    check "- feat: from another life" in pending(dir) # counted, for now
+
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    check "no release tag" in refused.output
+    check "git tag v0.1.0" in refused.output
 
     discard run("git tag v0.1.0 HEAD", dir)
     check commitFile(dir, "a.txt", "hi", "fix: the first with nimver").code == 0
@@ -312,10 +316,11 @@ suite "history":
     check "web-only change" notin dryRun2
 
 suite "which tags bound a range":
-  ## Bounding a range and reading a version are two questions. A tag whose
-  ## version nobody can parse still bounds one, exactly as it did before tracks
-  ## existed - deciding otherwise would unbound such a repository and make its
-  ## next release swallow the whole history.
+  ## Bounding a range and naming the version it ends at is one question, not
+  ## two. A tag nimver can read a `major.minor.patch` out of does both; anything
+  ## else is not a version tag of this package at all, and a repository marked
+  ## with nothing else is refused rather than released from the beginning of
+  ## time.
 
   test "a prerelease tag does not end a release's range":
     # The central regression: off a track, the release covers the whole cycle,
@@ -331,7 +336,6 @@ suite "which tags bound a range":
 
   test "a prerelease tag does end another prerelease's range":
     let dir = freshRepo("history-prerelease-is-a-boundary")
-    discard run("git tag v0.1.0", dir)
     discard commitFile(dir, "a.txt", "hi", "feat: before the alpha")
     check run("nimver track enter alpha", dir).code == 0
     check run("nimver bump", dir).code == 0
@@ -355,16 +359,21 @@ suite "which tags bound a range":
       check "fix: in front of it" in dryRun
       check "behind the tag" notin dryRun
 
-  test "a version tag nobody can read still bounds a range":
+  test "a version tag nobody can read bounds nothing, and the release is refused":
+    # These carry the prefix and a digit, so they look like ours - but nimver
+    # did not write them and cannot say which version they stand for. Bounding
+    # a range on one would only leave a base to be guessed at.
     for tagName in ["v1.0", "v2", "v20240101"]:
       let dir = freshRepo("history-unreadable-" & tagName)
+      discard run("git tag -d v0.1.0", dir)
       discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
       discard run("git tag " & tagName, dir)
       discard commitFile(dir, "b.txt", "hi", "fix: in front of it")
 
-      let dryRun = pending(dir)
-      check "fix: in front of it" in dryRun
-      check "behind the tag" notin dryRun
+      let refused = run("nimver bump", dir)
+      check refused.code != 0
+      check "no release tag" in refused.output
+      check "git tag v0.1.0" in refused.output
 
   test "a tag in nobody's scheme bounds nothing":
     let dir = freshRepo("history-unrecognised-tag")
@@ -374,16 +383,15 @@ suite "which tags bound a range":
 
     check "behind the tag" in pending(dir)
 
-  test "an unreadable boundary is no base, so a track is refused rather than guessed":
-    # `v1.0` says where the history ends but not at which version, and inventing
-    # one would move the manifest somewhere nobody asked for.
-    let dir = freshRepo("history-unreadable-is-no-base")
+  test "a readable tag alongside an unreadable one is the one that counts":
+    # A commit may carry several tags, and only the readable one is a tag at
+    # all now - so the range still ends here rather than running past it.
+    let dir = freshRepo("history-unreadable-sibling")
+    discard commitFile(dir, "a.txt", "hi", "feat: behind the tags")
     discard run("git tag v1.0", dir)
-    check run("nimver track enter alpha", dir).code == 0
-    discard commitFile(dir, "a.txt", "hi", "feat: a")
-    check run("nimver bump", dir).code == 0 # the manifest is still a release
-    discard commitFile(dir, "b.txt", "hi", "fix: b")
+    discard run("git tag v0.2.0", dir)
+    discard commitFile(dir, "b.txt", "hi", "fix: in front of them")
 
-    let refused = run("nimver bump", dir)
-    check refused.code != 0
-    check "no release tag" in refused.output
+    let dryRun = pending(dir)
+    check "fix: in front of them" in dryRun
+    check "behind the tags" notin dryRun

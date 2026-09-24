@@ -39,8 +39,7 @@ suite "bump":
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v0.2.0"
-    let (tags, _) = run("git tag", dir)
-    check tags.strip() == "v0.2.0"
+    check tags(dir) == @["v0.1.0", "v0.2.0"]
 
   test "bump's release commit is not itself a pending change":
     let dir = freshRepo("bump-commit")
@@ -91,6 +90,7 @@ suite "a tag that is already taken":
     discard run("nimver init", dir)
     discard run("git add -A", dir)
     discard run("git commit -q --no-verify -m \"chore: adopt nimver\"", dir)
+    discard run("git tag v0.1.0", dir)
 
     # The name taken on a branch this release knows nothing about.
     discard run("git checkout -q -b side", dir)
@@ -104,3 +104,48 @@ suite "a tag that is already taken":
     check "already exists" in refused.output
     check readFile(dir / "pkg.nimble").contains("0.1.0")
     check run("git rev-parse HEAD", dir).output == headBefore
+
+suite "a history no tag bounds":
+  ## Walking to the root commit and bumping from the manifest counted changes
+  ## the manifest version already accounted for, doubling the release. There is
+  ## no safe guess to make instead, so `bump` says what to tag and stops.
+
+  test "with nothing pending, it is still the repository that is refused":
+    # Asked before releasability on purpose: having a release behind you is a
+    # property of the repository. Answered the other way round, this would
+    # report nothing to bump and then refuse the moment a `feat:` landed.
+    let dir = freshRepo("no-tag-nothing-pending")
+    discard run("git tag -d v0.1.0", dir)
+
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    check "count the same changes twice" in refused.output
+    check "git tag v0.1.0" in refused.output
+    check "Nothing to bump" notin refused.output
+
+  test "a dry run is refused the same way":
+    let dir = freshRepo("no-tag-dry-run")
+    discard run("git tag -d v0.1.0", dir)
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+
+    let refused = run("nimver bump --dry-run", dir)
+    check refused.code != 0
+    check "no release tag" in refused.output
+    check "Would tag" notin refused.output
+
+  test "nothing is written, and the tagged sibling is not released either":
+    # A bare bump plans every package, so one untagged package holds up the
+    # release of its siblings - a one-time setup error, said once.
+    let dir = freshWorkspaceRepo("no-tag-one-package", strategy = "independent")
+    discard run("git tag -d v0.1.0", dir)
+    discard run("git tag cli-v0.1.0", dir)
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+    discard commitFile(dir, "packages/cli/src.nim", "discard\n", "feat: add cli")
+
+    let headBefore = run("git rev-parse HEAD", dir).output
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    check "package 'web' has" in refused.output
+    check "git tag web-v0.1.0" in refused.output
+    check run("git rev-parse HEAD", dir).output == headBefore
+    check tags(dir) == @["cli-v0.1.0"]

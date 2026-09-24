@@ -29,10 +29,13 @@ From the root of the Git repository you want to version:
 ```sh
 nimver init
 nimver install-hooks
+git tag v0.1.0   # whatever version your manifest is already on
 ```
 
 `init` creates `.nimver/config.ini`, pre-populated with sensible defaults.
 `install-hooks` writes a `commit-msg` hook into `.git/hooks/` that delegates to this binary, rejecting messages a bump would not be able to read. `.nimver/` should be committed to Git.
+
+Tag the version your manifest is already on. In an independent monorepo every declared package needs its own baseline tag (`git tag web-v1.2.0`), including packages you add later.
 
 ## Everyday use
 

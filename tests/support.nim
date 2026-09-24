@@ -83,14 +83,27 @@ proc initNimver(dir: string) =
   commandResult = run("nimver install-hooks", dir)
   doAssert commandResult.code == 0, "install-hooks failed: " & commandResult.output
 
+proc tagBaseline(dir: string) =
+  ## The version the manifest is already on, written as a tag - the whole of
+  ## what a repository adopting nimver has to do before its first bump, without
+  ## which `bump` refuses rather than counting a history that version already
+  ## accounts for.
+  ##
+  ## A flat `v` tag is what every naming recognises - a namespaced package finds
+  ## it through its legacy prefix - so this one bounds every package a fixture
+  ## declares, and any a test declares later.
+  let commandResult = run("git tag v0.1.0", dir)
+  doAssert commandResult.code == 0, "baseline tag failed: " & commandResult.output
+
 proc commitAll(dir, message: string) =
   discard run("git add -A", dir)
   let commandResult = run("git commit -q -m \"" & message & "\"", dir)
   doAssert commandResult.code == 0, "commit failed: " & commandResult.output
 
 proc freshRepo*(name: string): string =
-  ## A repo with one commit and an initial `pkg.nimble` at 0.1.0, with
-  ## nimver initialized and its hooks installed.
+  ## A repo with one commit and an initial `pkg.nimble` at 0.1.0, tagged
+  ## `v0.1.0`, with nimver initialized and its hooks installed. The tag is the
+  ## release its history is measured from, without which `bump` refuses.
   result = TestRepoRoot / name
   resetDir(result)
   createDir(result)
@@ -98,6 +111,7 @@ proc freshRepo*(name: string): string =
   initGitRepo(result)
   writeFile(result / "pkg.nimble", "version = \"0.1.0\"\n")
   commitAll(result, "chore: init")
+  tagBaseline(result)
   initNimver(result)
 
 proc freshPackageRepo*(name: string): string =
@@ -118,6 +132,7 @@ proc freshPackageRepo*(name: string): string =
   )
   writeFile(result / "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
   commitAll(result, "chore: init")
+  tagBaseline(result)
   initNimver(result)
 
 proc freshWorkspaceRepo*(
@@ -153,6 +168,7 @@ proc freshWorkspaceRepo*(
   if includeRootPackage:
     writeFile(result / "root.nimble", "version = \"0.1.0\"\n")
   commitAll(result, "chore: init")
+  tagBaseline(result)
 
   var commandResult = run("nimver init", result)
   doAssert commandResult.code == 0, "init failed: " & commandResult.output
@@ -207,6 +223,7 @@ proc freshSiblingWorkspaceRepo*(
   writeFile(result / "packages" / "both" / "alpha.nimble", "version = \"0.1.0\"\n")
   writeFile(result / "packages" / "both" / "beta.nimble", "version = \"0.1.0\"\n")
   commitAll(result, "chore: init")
+  tagBaseline(result)
 
   var commandResult = run("nimver init", result)
   doAssert commandResult.code == 0, "init failed: " & commandResult.output
@@ -243,9 +260,10 @@ proc commitFile*(
   run("git commit -q -m \"" & message & "\"", dir)
 
 proc freshReleasedRepo*(name: string): string =
-  ## `freshRepo` with one release behind it, so the repository is at v0.2.0 and
-  ## carries the tag. Nearly every track test needs one: a prerelease is
-  ## measured from a release, and a repository without one is refused.
+  ## `freshRepo` with one release on top of the baseline, so the repository is
+  ## at v0.2.0 and carries both tags. Nearly every track test needs one: a
+  ## prerelease is measured from a release, and a repository without one is
+  ## refused.
   result = freshRepo(name)
   discard commitFile(result, "released.txt", "hi", "feat: the released one")
   let commandResult = run("nimver bump", result)

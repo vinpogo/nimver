@@ -100,7 +100,28 @@ func claimedBy(entries: seq[ChangeEntry], package: WorkspacePackage): seq[Change
     (package.rootDirectory.len == 0 and "root" in it.affectedPackages)
   )
 
-func noReleaseToBuildOn(naming: ReleaseNaming, track: Track): ref IOError =
+proc taggableVersion(manifests: seq[ProjectManifest]): Option[SemVer] =
+  ## The version to advise tagging, and nothing at all when there is none worth
+  ## advising. A prerelease is no record of a release that happened, and a
+  ## manifest nobody can read a version out of is the next complaint `bump`
+  ## makes on its own - neither is a reason for a refusal to fail instead of
+  ## being printed.
+  for manifest in manifests:
+    try:
+      let version = readVersion(manifest)
+      if not version.isPrerelease():
+        return some(version)
+    except CatchableError:
+      discard
+  none(SemVer)
+
+func noReleaseToBuildOn(
+    naming: ReleaseNaming, track: Track, advisedVersion: Option[SemVer]
+): ref IOError =
+  ## One refusal with two faces. On a track there is no release to measure the
+  ## prerelease from; off one the manifest's version is itself the only record
+  ## of an untagged history, so bumping it would charge for those changes twice.
+  ##
   ## The tag prefix comes from the naming rather than the package name: a lone
   ## package is released as `v1.2.3`, and advising `pkg-v1.2.3` would hand back
   ## a tag nothing recognises.
@@ -109,20 +130,24 @@ func noReleaseToBuildOn(naming: ReleaseNaming, track: Track): ref IOError =
       "package '" & naming.packageName & "' has"
     else:
       "this repository has"
-  newException(
-    IOError,
-    named & " no release tag in this branch's history, so a prerelease on track '" &
-      track.name &
-      "' has nothing to be based on. Tag the release it builds on (`git tag " &
-      naming.tagPrefix & "<version>`), then bump again.",
-  )
+  let tagName =
+    naming.tagPrefix & (
+      if advisedVersion.isSome():
+        $advisedVersion.get
+      else:
+        "<version>"
+    )
+  let rest =
+    if track.hasTrack:
+      "so a prerelease on track '" & track.name &
+        "' has nothing to be based on. Tag the release it builds on (`git tag " & tagName &
+        "`), then bump again."
+    else:
+      "so there is nothing to bump from: the version in the manifest already accounts for that history, and releasing from it would count the same changes twice. Tag the version it is already on (`git tag " &
+        tagName & "`), then bump again."
+  newException(IOError, named & " no release tag in this branch's history, " & rest)
 
-func baseVersionFor(
-    sinceRelease: PendingChanges,
-    manifestVersion: SemVer,
-    track: Track,
-    naming: ReleaseNaming,
-): SemVer =
+func baseVersionFor(sinceRelease: PendingChanges, manifestVersion: SemVer): SemVer =
   ## What to bump from.
   ##
   ## The manifest, as long as it holds a release - which is every case there
@@ -135,10 +160,11 @@ func baseVersionFor(
   ## That leaves the release the walk stopped at, and nothing else will do.
   ## Taking the prerelease's own core would drift the version upward once per
   ## iteration; taking 0.0.0 would quietly rewrite a 3.4.5 project downwards.
+  ##
+  ## There is always one to take: a walk that met no version at all is refused
+  ## before a version is ever planned.
   if not manifestVersion.isPrerelease():
     return manifestVersion
-  if sinceRelease.boundaryVersion.isNone():
-    raise noReleaseToBuildOn(naming, track)
   sinceRelease.boundaryVersion.get.core
 
 proc planVersion(
@@ -161,13 +187,18 @@ proc planVersion(
       pendingChanges(repoRoot, currentConfig, naming, vbRelease)
     else:
       notes
+  # Before releasability: having a release behind you is a property of the
+  # repository, not of what happens to be pending. Asked the other way round, a
+  # repository of nothing but `chore:` commits would report nothing to bump and
+  # then refuse the moment a `feat:` landed.
+  if sinceRelease.boundaryVersion.isNone():
+    raise noReleaseToBuildOn(naming, track, taggableVersion(@[package.manifest]))
   release.level = highestBumpLevel(sinceRelease.entries.claimedBy(package))
   if not release.isReleasable():
     return
 
   release.current = readVersion(package.manifest)
-  let core =
-    bump(baseVersionFor(sinceRelease, release.current, track, naming), release.level)
+  let core = bump(baseVersionFor(sinceRelease, release.current), release.level)
   release.next =
     if track.hasTrack:
       core.onTrack(track.name, nextIteration(repoRoot, naming, core))
@@ -247,13 +278,14 @@ proc planFixedRelease*(
       pendingChanges(repoRoot, currentConfig, naming, vbRelease)
     else:
       notes
+  if sinceRelease.boundaryVersion.isNone():
+    raise noReleaseToBuildOn(naming, track, taggableVersion(result.manifests))
   result.level = highestBumpLevel(sinceRelease.entries)
   if not result.isReleasable():
     return
 
   result.current = sharedCurrentVersion(projectWorkspace.packages)
-  let core =
-    bump(baseVersionFor(sinceRelease, result.current, track, naming), result.level)
+  let core = bump(baseVersionFor(sinceRelease, result.current), result.level)
   result.next =
     if track.hasTrack:
       core.onTrack(track.name, nextIteration(repoRoot, naming, core))
