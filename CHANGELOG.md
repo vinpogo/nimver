@@ -1,5 +1,11 @@
 # Changelog
 
+## [5.1.1] - 2026-09-24
+
+### Commits
+- fix(ci): fetch full history in tests workflow
+- chore(ci): update release runner versions
+
 ## [5.1.0] - 2026-09-24
 
 - Setting up nimver now requires a git tag to detect commit ranges. This also includes setup for new packages in an independently versioned monorepo.
