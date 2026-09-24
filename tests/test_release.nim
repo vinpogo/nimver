@@ -26,6 +26,7 @@ proc release(
     level: BumpLevel,
     changelogPath = "CHANGELOG.md",
     entries = @[entry(blMinor)],
+    trackLevel = blIgnore,
 ): PackageRelease =
   PackageRelease(
     name: name,
@@ -34,6 +35,10 @@ proc release(
     current: parseSemVer("0.1.0"),
     next: parseSemVer(next),
     level: level,
+    # Off a track the two walks are one walk, so the two levels agree. Only a
+    # release on a track can have `level` say `minor` while `trackLevel` says
+    # there is nothing new to cut.
+    trackLevel: if trackLevel == blIgnore: level else: trackLevel,
     section: "## [" & next & "]\n",
     changelogPath: changelogPath,
     tag: name & "-v" & next,

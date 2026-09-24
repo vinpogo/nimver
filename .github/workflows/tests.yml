@@ -17,7 +17,7 @@ jobs:
 
       - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
-          nim-version: "2.2.10"
+          nim-version: "2.2.12"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build nimver
@@ -45,7 +45,7 @@ jobs:
 
       - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
-          nim-version: "2.2.10"
+          nim-version: "2.2.12"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

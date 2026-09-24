@@ -15,15 +15,43 @@ suite "parsing versions":
   test "surrounding whitespace is ignored":
     check $parseSemVer("  0.4.11\n") == "0.4.11"
 
-  test "a pre-release suffix is dropped":
-    check $parseSemVer("1.2.3-rc.1") == "1.2.3"
+  test "a track suffix is kept, and says which track and which iteration":
+    let version = parseSemVer("1.2.3-rc.1")
+    check version.core == parseSemVer("1.2.3")
+    check version.track == "rc"
+    check version.iteration == 1
+    check version.isPrerelease()
+    check $version == "1.2.3-rc.1"
+
+  test "a release has no track":
+    let version = parseSemVer("1.2.3")
+    check version.track == ""
+    check version.iteration == 0
+    check not version.isPrerelease()
+
+  test "a suffix nimver did not write is still dropped":
+    # Everything nimver writes is `<letters>.<n>`. A suffix of any other shape
+    # belongs to whoever wrote it, and reading meaning into it would claim
+    # versions that are not ours.
+    check $parseSemVer("1.2.3-SNAPSHOT") == "1.2.3"
+    check $parseSemVer("1.2.3-rc1") == "1.2.3"
+    check $parseSemVer("1.2.3-rc.1.2") == "1.2.3"
+    check $parseSemVer("1.2.3-rc.0") == "1.2.3"
+    check $parseSemVer("1.2.3-rc.x") == "1.2.3"
+    check $parseSemVer("1.2.3-2.1") == "1.2.3"
+    check $parseSemVer("1.2.3-") == "1.2.3"
 
   test "build metadata is dropped":
     check $parseSemVer("1.2.3+build.5") == "1.2.3"
 
-  test "a dash inside build metadata does not confuse the pre-release split":
+  test "a dash inside build metadata does not confuse the track split":
     check $parseSemVer("1.2.3+build-5") == "1.2.3"
-    check $parseSemVer("1.2.3-rc.1+build.5") == "1.2.3"
+    check $parseSemVer("1.2.3-rc.1+build.5") == "1.2.3-rc.1"
+
+  test "two versions differing only in their track are not the same version":
+    check parseSemVer("1.2.3") != parseSemVer("1.2.3-rc.1")
+    check parseSemVer("1.2.3-rc.1") != parseSemVer("1.2.3-rc.2")
+    check parseSemVer("1.2.3-rc.1") != parseSemVer("1.2.3-beta.1")
 
   test "too few components are rejected":
     expect ValueError:
@@ -65,6 +93,30 @@ suite "bumping versions":
 
   test "a zero major stays below one":
     check $parseSemVer("0.1.0").bump(blMinor) == "0.2.0"
+
+  test "bumping a prerelease yields a release":
+    # A track is put back on afterwards, by whoever knows which one and at
+    # which iteration.
+    check $parseSemVer("1.2.3-rc.4").bump(blPatch) == "1.2.4"
+    check $parseSemVer("1.2.3-rc.4").bump(blMajor) == "2.0.0"
+
+  test "none and ignore leave a prerelease as it stands":
+    check $parseSemVer("1.2.3-rc.4").bump(blNone) == "1.2.3-rc.4"
+    check $parseSemVer("1.2.3-rc.4").bump(blIgnore) == "1.2.3-rc.4"
+
+suite "putting a version on a track":
+  test "onTrack keeps the core and spells the suffix":
+    check $parseSemVer("1.2.0").onTrack("alpha", 9) == "1.2.0-alpha.9"
+
+  test "onTrack replaces a track already there":
+    check $parseSemVer("1.2.0-alpha.9").onTrack("beta", 1) == "1.2.0-beta.1"
+
+  test "core strips the track":
+    check $parseSemVer("1.2.0-alpha.9").core == "1.2.0"
+
+  test "a rendered prerelease parses back to itself":
+    for spelled in ["1.2.0-alpha.1", "0.1.0-rc.21", "10.0.3-nightly.100"]:
+      check $parseSemVer(spelled) == spelled
 
 suite "bump levels":
   test "parsing is case-insensitive and ignores whitespace":

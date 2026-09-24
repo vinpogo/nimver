@@ -341,3 +341,33 @@ suite "scoped package names":
     check code != 0
     check "Unknown package 'web'" in output
     check "@acme/web, @acme/cli" in output
+
+suite "strategies on a track":
+  test "a fixed workspace moves every manifest to the same prerelease":
+    let dir = freshWorkspaceRepo("strategy-fixed-track", strategy = "fixed")
+    discard commitFile(dir, "packages/web/a.txt", "hi", "feat: a")
+    check run("nimver bump", dir).code == 0
+
+    check run("nimver track enter rc", dir).code == 0
+    discard commitFile(dir, "packages/web/b.txt", "hi", "fix: b")
+    check run("nimver bump", dir).code == 0
+
+    check "v0.2.1-rc.1" in run("git tag", dir).output
+    check "0.2.1-rc.1" in readFile(dir / "packages" / "web" / "package.json")
+    check "0.2.1-rc.1" in readFile(dir / "packages" / "cli" / "cli.nimble")
+    check "version: v0.2.1-rc.1" in run("git log -1 --format=%s", dir).output
+
+  test "an independent workspace numbers each package's track on its own":
+    let dir = freshWorkspaceRepo("strategy-independent-track", strategy = "independent")
+    discard commitFile(dir, "packages/web/a.txt", "hi", "feat: web")
+    discard commitFile(dir, "packages/cli/a.txt", "hi", "fix: cli")
+    check run("nimver bump", dir).code == 0
+
+    check run("nimver track enter alpha", dir).code == 0
+    discard commitFile(dir, "packages/web/b.txt", "hi", "fix: web again")
+    discard commitFile(dir, "packages/cli/b.txt", "hi", "fix: cli again")
+    check run("nimver bump", dir).code == 0
+
+    let tagOutput = run("git tag", dir).output
+    check "web-v0.2.1-alpha.1" in tagOutput
+    check "cli-v0.1.2-alpha.1" in tagOutput

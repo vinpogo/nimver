@@ -32,13 +32,7 @@ nimver install-hooks
 ```
 
 `init` creates `.nimver/config.ini`, pre-populated with sensible defaults.
-`install-hooks` writes a `commit-msg` hook into `.git/hooks/` that delegates to this binary, rejecting messages a release would not be able to read. `.nimver/` should be committed to Git.
-
-The config is checked before it is used: an unknown section or setting, a
-setting written above any section, or a line that does not parse is an error
-naming what it found and the nearest thing it knows. A misspelled
-`[packages.web]` would otherwise leave a workspace with no packages, which reads
-exactly like a repository that never declared any.
+`install-hooks` writes a `commit-msg` hook into `.git/hooks/` that delegates to this binary, rejecting messages a bump would not be able to read. `.nimver/` should be committed to Git.
 
 ## Everyday use
 
@@ -62,11 +56,7 @@ nimver bump --dry-run # what it would do, and the changelog entry it would write
 
 ### What counts as pending
 
-`bump` looks back from `HEAD` to the last release of the package it is releasing — the newest commit carrying that package's release tag. Every commit in between is a pending change, and its type decides the bump.
-
-Two things follow from reading history rather than a recorded state:
-
-- **CI needs the history and the tags.** Shallow clones do not have them; on GitHub Actions that means `fetch-depth: 0` on `actions/checkout`.
+`bump` looks back from `HEAD` to the last release of the package within the track it is releasing — the newest commit carrying that package's release tag. Every commit in between is a pending change, and its type decides the bump.
 
 ## Supported project manifests
 
@@ -196,12 +186,44 @@ fix(parser): tighten the scope regex
 Release-Note: Scopes may now contain digits, slashes and dots.
 ```
 
+## Release tracks
+
+A **track** is a named channel for versions - `alpha`, `rc`, `nightly`, whatever
+you call it. On one, `bump` cuts prereleases you can iterate on before
+committing to the number:
+
+```sh
+nimver track enter rc   # from here on, bump cuts prereleases
+nimver bump             # v1.2.0-rc.1
+nimver bump             # v1.2.0-rc.2, after a few more fixes
+nimver track exit       # back to releases
+nimver bump             # v1.2.0
+```
+
+### Tracks in a monorepo
+
+With `strategy = independent` each package can be on a track of its own:
+
+```sh
+nimver track enter alpha --package web   # web only
+nimver track enter beta                  # everyone else
+nimver track exit --package web          # web comes off, the rest stay on
+```
+
+A bare `nimver track enter` puts every package on the track, so the `nimver bump`
+that follows prereleases all of them; `--package`, or `nimver bump <package>`,
+narrows it. A `fixed` workspace has one version and therefore one track, and
+refuses `--package`.
+
 ## CLI reference
 
 ```
 nimver init
 nimver install-hooks [--force]
 nimver bump [<package>] [--dry-run]
+nimver track
+nimver track enter <name> [--package <name>]
+nimver track exit [--package <name>]
 nimver version
 
 Invoked by the installed hook (not usually run by hand):

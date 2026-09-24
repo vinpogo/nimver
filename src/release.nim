@@ -1,10 +1,11 @@
-import std/[strutils, sequtils, tables]
+import std/[options, strutils, sequtils, tables]
 import ./sysio
 import config
 import changes
 import adapters/manifest
 import changelog
 import semver
+import track
 import workspace
 import history
 
@@ -20,8 +21,17 @@ type PackageRelease* = object
   manifests*: seq[ProjectManifest]
     ## Plural because a fixed workspace moves every manifest to one version.
   entries*: seq[ChangeEntry]
+    ## What the changelog section lists: the changes since the last version,
+    ## which on a track is the one before this prerelease.
   current*, next*: SemVer
   level*: BumpLevel
+    ## Across every commit since the last release, so it decides the core -
+    ## a track's second prerelease is still `minor` over the same range, not a
+    ## second minor on top of the first.
+  trackLevel*: BumpLevel
+    ## Across `entries` alone, so it decides whether there is anything to cut.
+    ## The two differ only on a track: at `1.2.0-alpha.1`, a lone `docs:` is
+    ## `none` here while `level` stays `minor`, and nothing should go out.
   section*: string
   changelogPath*: string
   tag*: string
@@ -46,7 +56,7 @@ func hasPendingChanges*(release: PackageRelease): bool =
   release.entries.len > 0
 
 func isReleasable*(release: PackageRelease): bool =
-  release.hasPendingChanges() and release.level != blNone
+  release.hasPendingChanges() and release.trackLevel != blNone
 
 func releaseLabelFor*(projectWorkspace: Workspace, release: PackageRelease): string =
   if projectWorkspace.releasesPackagesApart(): release.name else: "version"
@@ -80,11 +90,96 @@ proc changelogPackageLabelFor(
       return package.name
   ""
 
+func claimedBy(entries: seq[ChangeEntry], package: WorkspacePackage): seq[ChangeEntry] =
+  entries.filterIt(
+    package.name in it.affectedPackages or
+    # Before a workspace gains a second package, a lone auto-detected
+    # manifest is named `root` (package.json has no name in its filename).
+    # Accept those historical changes for whichever package now sits at the
+    # repo root so the boundary is not lost on transition.
+    (package.rootDirectory.len == 0 and "root" in it.affectedPackages)
+  )
+
+func noReleaseToBuildOn(naming: ReleaseNaming, track: Track): ref IOError =
+  ## The tag prefix comes from the naming rather than the package name: a lone
+  ## package is released as `v1.2.3`, and advising `pkg-v1.2.3` would hand back
+  ## a tag nothing recognises.
+  let named =
+    if naming.packageName.len > 0:
+      "package '" & naming.packageName & "' has"
+    else:
+      "this repository has"
+  newException(
+    IOError,
+    named & " no release tag in this branch's history, so a prerelease on track '" &
+      track.name &
+      "' has nothing to be based on. Tag the release it builds on (`git tag " &
+      naming.tagPrefix & "<version>`), then bump again.",
+  )
+
+func baseVersionFor(
+    sinceRelease: PendingChanges,
+    manifestVersion: SemVer,
+    track: Track,
+    naming: ReleaseNaming,
+): SemVer =
+  ## What to bump from.
+  ##
+  ## The manifest, as long as it holds a release - which is every case there
+  ## was before tracks, and the first prerelease after a release too. Once it
+  ## holds a prerelease it cannot serve: `1.2.0-alpha.3` already *is* the
+  ## result of bumping the release behind it, so bumping it again would pay for
+  ## the same minor twice, and coming off the track would give 1.2.1 where
+  ## 1.2.0 was meant.
+  ##
+  ## That leaves the release the walk stopped at, and nothing else will do.
+  ## Taking the prerelease's own core would drift the version upward once per
+  ## iteration; taking 0.0.0 would quietly rewrite a 3.4.5 project downwards.
+  if not manifestVersion.isPrerelease():
+    return manifestVersion
+  if sinceRelease.boundaryVersion.isNone():
+    raise noReleaseToBuildOn(naming, track)
+  sinceRelease.boundaryVersion.get.core
+
+proc planVersion(
+    repoRoot: string,
+    naming: ReleaseNaming,
+    currentConfig: NimverConfig,
+    track: Track,
+    package: WorkspacePackage,
+    release: var PackageRelease,
+) =
+  ## The two walks a version needs, and what each answers. Off a track they are
+  ## the same walk: the boundaries coincide, so there is nothing to ask twice.
+  let notesBoundary = if track.hasTrack: vbAnyVersion else: vbRelease
+  let notes = pendingChanges(repoRoot, currentConfig, naming, notesBoundary)
+  release.entries = notes.entries.claimedBy(package)
+  release.trackLevel = highestBumpLevel(release.entries)
+
+  let sinceRelease =
+    if track.hasTrack:
+      pendingChanges(repoRoot, currentConfig, naming, vbRelease)
+    else:
+      notes
+  release.level = highestBumpLevel(sinceRelease.entries.claimedBy(package))
+  if not release.isReleasable():
+    return
+
+  release.current = readVersion(package.manifest)
+  let core =
+    bump(baseVersionFor(sinceRelease, release.current, track, naming), release.level)
+  release.next =
+    if track.hasTrack:
+      core.onTrack(track.name, nextIteration(repoRoot, naming, core))
+    else:
+      core
+
 proc planRelease*(
     repoRoot: string,
     projectWorkspace: Workspace,
     currentConfig: NimverConfig,
     package: WorkspacePackage,
+    track = noTrack(),
 ): PackageRelease =
   ## Every package reads its own stretch of history, ending at its own last
   ## release. A change touching two packages is therefore counted once for
@@ -92,25 +187,12 @@ proc planRelease*(
   ## of releasing them independently.
   result.name = package.name
   result.manifests = @[package.manifest]
-  result.entries = pendingChanges(
-      repoRoot,
-      currentConfig,
-      newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart()),
-    )
-    .filterIt(
-      package.name in it.affectedPackages or
-      # Before a workspace gains a second package, a lone auto-detected
-      # manifest is named `root` (package.json has no name in its filename).
-      # Accept those historical changes for whichever package now sits at the
-      # repo root so the boundary is not lost on transition.
-      (package.rootDirectory.len == 0 and "root" in it.affectedPackages)
-    )
-  result.level = highestBumpLevel(result.entries)
+  let naming =
+    newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart(), track)
+  planVersion(repoRoot, naming, currentConfig, track, package, result)
   if not result.isReleasable():
     return
 
-  result.current = readVersion(package.manifest)
-  result.next = bump(result.current, result.level)
   result.section = buildSection(
     result.next,
     result.entries,
@@ -119,7 +201,7 @@ proc planRelease*(
   result.changelogPath = changelogPathFor(repoRoot, package)
   result.tag = releaseTagFor(projectWorkspace, package.name, result.next)
 
-proc fixedReleaseNaming(projectWorkspace: Workspace): ReleaseNaming =
+proc fixedReleaseNaming(projectWorkspace: Workspace, track: Track): ReleaseNaming =
   ## One version for the whole repository, so one stretch of history behind it.
   ## A lone package's name is still worth knowing: the namespaced tags it wrote
   ## while the workspace had siblings end the range too.
@@ -128,7 +210,7 @@ proc fixedReleaseNaming(projectWorkspace: Workspace): ReleaseNaming =
       projectWorkspace.packages[0].name
     else:
       ""
-  newReleaseNaming(survivingName, namespaced = false)
+  newReleaseNaming(survivingName, namespaced = false, track = track)
 
 proc sharedCurrentVersion(packages: seq[WorkspacePackage]): SemVer =
   ## The one version a fixed workspace is on. Manifests that disagree have to be
@@ -145,19 +227,38 @@ proc sharedCurrentVersion(packages: seq[WorkspacePackage]): SemVer =
       )
 
 proc planFixedRelease*(
-    repoRoot: string, projectWorkspace: Workspace, currentConfig: NimverConfig
+    repoRoot: string,
+    projectWorkspace: Workspace,
+    currentConfig: NimverConfig,
+    track = noTrack(),
 ): PackageRelease =
   ## The whole repository moving at once: one version across every manifest, one
-  ## changelog section at the repository root, one tag.
+  ## changelog section at the repository root, one tag - and therefore one
+  ## track, whatever any package might have asked for.
   result.manifests = projectWorkspace.packages.mapIt(it.manifest)
-  result.entries =
-    pendingChanges(repoRoot, currentConfig, fixedReleaseNaming(projectWorkspace))
-  result.level = highestBumpLevel(result.entries)
+  let naming = fixedReleaseNaming(projectWorkspace, track)
+  let notesBoundary = if track.hasTrack: vbAnyVersion else: vbRelease
+  let notes = pendingChanges(repoRoot, currentConfig, naming, notesBoundary)
+  result.entries = notes.entries
+  result.trackLevel = highestBumpLevel(result.entries)
+
+  let sinceRelease =
+    if track.hasTrack:
+      pendingChanges(repoRoot, currentConfig, naming, vbRelease)
+    else:
+      notes
+  result.level = highestBumpLevel(sinceRelease.entries)
   if not result.isReleasable():
     return
 
   result.current = sharedCurrentVersion(projectWorkspace.packages)
-  result.next = bump(result.current, result.level)
+  let core =
+    bump(baseVersionFor(sinceRelease, result.current, track, naming), result.level)
+  result.next =
+    if track.hasTrack:
+      core.onTrack(track.name, nextIteration(repoRoot, naming, core))
+    else:
+      core
   result.section = buildSection(result.next, result.entries)
   result.changelogPath = repoRoot / ChangelogName
   result.tag = releaseTagFor(projectWorkspace, result.name, result.next)

@@ -241,3 +241,33 @@ proc commitFile*(
   writeFile(dir / fileName, contents)
   discard run("git add -A", dir)
   run("git commit -q -m \"" & message & "\"", dir)
+
+proc freshReleasedRepo*(name: string): string =
+  ## `freshRepo` with one release behind it, so the repository is at v0.2.0 and
+  ## carries the tag. Nearly every track test needs one: a prerelease is
+  ## measured from a release, and a repository without one is refused.
+  result = freshRepo(name)
+  discard commitFile(result, "released.txt", "hi", "feat: the released one")
+  let commandResult = run("nimver bump", result)
+  doAssert commandResult.code == 0, "first release failed: " & commandResult.output
+
+proc setTrack*(dir, subcommand: string): tuple[output: string, code: int] =
+  run("nimver track " & subcommand, dir)
+
+proc tags*(dir: string): seq[string] =
+  for line in run("git tag", dir).output.splitLines():
+    if line.strip().len > 0:
+      result.add(line.strip())
+
+proc manifestVersion*(dir, manifestRelativePath: string): string =
+  ## The version a manifest carries, however it spells the field.
+  for line in readFile(dir / manifestRelativePath).splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith("version"):
+      let parts = trimmed.split('"')
+      if parts.len >= 2:
+        return parts[1]
+      let jsonParts = trimmed.split(':')
+      if jsonParts.len >= 2:
+        return jsonParts[1].strip().strip(chars = {'"', ','})
+  ""

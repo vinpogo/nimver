@@ -99,3 +99,9 @@ proc gitRootEntryNames*(repoRoot, revision: string): seq[string] =
     .splitLines()
     .filterIt(it.strip().len > 0)
     .mapIt(it.strip())
+
+proc tagExists*(repoRoot: string, tag: string): bool =
+  ## Asked before a release writes anything: `git tag` refusing a name it
+  ## already knows would otherwise fail after the manifests had moved.
+  tryRunGit(@["-C", repoRoot, "rev-parse", "--verify", "--quiet", "refs/tags/" & tag]).exitCode ==
+    0

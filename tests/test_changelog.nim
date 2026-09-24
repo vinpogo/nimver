@@ -35,6 +35,16 @@ suite "section heading":
     let section = buildSection(parseSemVer("0.2.0"), @[], packageName = "web")
     check section.startsWith("## [web 0.2.0] - " & today)
 
+  test "a prerelease names its track in the heading":
+    let section =
+      buildSection(parseSemVer("1.2.0-alpha.1"), @[entry("feat", "feat: a")])
+    check section.startsWith("## [1.2.0-alpha.1] - ")
+
+  test "a shared changelog names the package alongside the track":
+    let section =
+      buildSection(parseSemVer("1.2.0-alpha.1"), @[entry("feat", "feat: a")], "web")
+    check section.startsWith("## [web 1.2.0-alpha.1] - ")
+
 suite "the commit list":
   test "a release without notes is a heading and its commits":
     let section = buildSection(

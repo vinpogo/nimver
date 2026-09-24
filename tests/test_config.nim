@@ -2,10 +2,11 @@
 ## types, workspace strategy and packages, and which malformed ones it refuses
 ## rather than quietly reading as something else.
 
-import std/[unittest, options, strutils, tables]
+import std/[unittest, options, strutils, tables, os]
 import config
 import commitparser
 import semver
+import ./support
 
 suite "types":
   test "each type maps to its bump level":
@@ -433,3 +434,19 @@ suite "section headers written loosely":
     )
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/web"
+
+suite "the track file sits beside the configuration without disturbing it":
+  test "a .nimver/track next to config.ini is not the configuration's business":
+    let dir = freshRepo("config-with-a-track-file")
+    check run("nimver track enter alpha", dir).code == 0
+    check run("nimver bump --dry-run", dir).code == 0
+
+  test "[track] is still an unknown section":
+    # The track lives in a file of its own, so nothing should start suggesting
+    # it as a configuration section.
+    let dir = freshRepo("config-track-section")
+    let configFile = dir / ".nimver" / "config.ini"
+    writeFile(configFile, readFile(configFile) & "\n[track]\nname = alpha\n")
+    let (output, code) = run("nimver bump --dry-run", dir)
+    check code != 0
+    check "Unknown section [track]" in output

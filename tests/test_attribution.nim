@@ -89,6 +89,11 @@ suite "files no package claims":
     check testWorkspace(packages)
       .affectedPackageNames(@[".nimver/changes/abc123.txt"]).len == 0
 
+  test "the track file is skipped rather than shared":
+    # Counted, entering a track would mark every package affected and put a
+    # line in every changelog.
+    check testWorkspace(packages).affectedPackageNames(@[".nimver/track"]).len == 0
+
   test "the config itself is a shared change":
     check testWorkspace(packages).affectedPackageNames(@[".nimver/config.ini"]) ==
       @["web", "cli"]

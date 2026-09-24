@@ -1,8 +1,10 @@
 import std/[algorithm, options, sequtils]
 import ../config
+import ../sysio
 import ../adapters/manifest
 import ../changelog
 import ../semver
+import ../track
 import ../workspace
 import ../gitutils
 import ../release
@@ -12,6 +14,7 @@ proc plannedReleases(
     projectWorkspace: Workspace,
     currentConfig: NimverConfig,
     requestedPackageName: Option[string],
+    tracks: TrackSelection,
 ): seq[PackageRelease] =
   ## Every release the strategy would consider, releasable or not, so that
   ## having nothing to bump can still be reported in the caller's terms.
@@ -22,7 +25,12 @@ proc plannedReleases(
         IOError,
         "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent.",
       )
-    @[planFixedRelease(repoRoot, projectWorkspace, currentConfig)]
+    # One version across every manifest, so one track: the repository-wide one.
+    @[
+      planFixedRelease(
+        repoRoot, projectWorkspace, currentConfig, Track(name: tracks.default)
+      )
+    ]
   of wsIndependent:
     # A bare `bump` releases everything that has pending changes; naming a
     # package narrows the release to that one.
@@ -31,7 +39,11 @@ proc plannedReleases(
         @[projectWorkspace.findPackage(requestedPackageName.get)]
       else:
         projectWorkspace.packages
-    candidates.mapIt(planRelease(repoRoot, projectWorkspace, currentConfig, it))
+    candidates.mapIt(
+      planRelease(
+        repoRoot, projectWorkspace, currentConfig, it, tracks.trackFor(it.name)
+      )
+    )
 
 proc nothingToBumpReason(planned: seq[PackageRelease]): string =
   if planned.anyIt(it.hasPendingChanges()):
@@ -62,8 +74,48 @@ proc reportDryRun(releases: seq[PackageRelease]) =
         " for " & release.name
       else:
         ""
-    echo "\n--- CHANGELOG entry", releaseLabel, " (dry run, nothing written) ---"
+    echo "\nWould tag ", release.tag
+    echo "--- CHANGELOG entry", releaseLabel, " (dry run, nothing written) ---"
     echo release.section
+
+proc warnAboutTracks(tracks: TrackSelection, projectWorkspace: Workspace) =
+  ## Said before anything is planned, so it is there whether the run goes on to
+  ## release, to find nothing to bump, or to refuse for want of a release to
+  ## build on.
+  if not tracks.anyTrack():
+    return
+
+  proc advice(trackName: string): string =
+    " These are prereleases: the tag and the manifest version both carry `-" & trackName &
+      ".<n>`. Run `nimver track exit` to come off the track."
+
+  let onDefault =
+    projectWorkspace.packages.allIt(tracks.trackFor(it.name).name == tracks.default)
+  if onDefault and tracks.default.len > 0:
+    writeError(
+      "nimver: releasing on track '" & tracks.default & "'." & advice(tracks.default)
+    )
+    return
+
+  for package in projectWorkspace.packages:
+    let trackName = tracks.trackFor(package.name).name
+    if trackName.len > 0:
+      writeError(
+        "nimver: releasing " & package.name & " on track '" & trackName & "'." &
+          advice(trackName)
+      )
+
+proc checkTagsAreFree(repoRoot: string, releases: seq[PackageRelease]) =
+  ## Before a line of it is written. `applyReleases` tags last, so a name `git
+  ## tag` already knows would fail after the manifests were moved and the
+  ## release commit made, leaving the two out of step.
+  for release in releases:
+    if tagExists(repoRoot, release.tag):
+      raise newException(
+        IOError,
+        "tag " & release.tag &
+          " already exists. Delete it, or release from a branch that has not used it.",
+      )
 
 proc applyReleases(
     repoRoot: string, projectWorkspace: Workspace, releases: seq[PackageRelease]
@@ -91,9 +143,11 @@ proc applyReleases(
 
 proc cmdBump*(repoRoot: string, requestedPackageName: Option[string], dryRun: bool) =
   let config = loadUserConfig(repoRoot)
+  let tracks = readTracks(repoRoot)
   let projectWorkspace = loadWorkspace(repoRoot, config)
+  warnAboutTracks(tracks, projectWorkspace)
   let planned =
-    plannedReleases(repoRoot, projectWorkspace, config, requestedPackageName)
+    plannedReleases(repoRoot, projectWorkspace, config, requestedPackageName, tracks)
 
   # One order for everything a run emits - changelog sections, progress lines,
   # tags, the commit subject - so releasing the same set of packages reads the
@@ -107,4 +161,5 @@ proc cmdBump*(repoRoot: string, requestedPackageName: Option[string], dryRun: bo
   if dryRun:
     reportDryRun(releases)
     return
+  checkTagsAreFree(repoRoot, releases)
   applyReleases(repoRoot, projectWorkspace, releases)

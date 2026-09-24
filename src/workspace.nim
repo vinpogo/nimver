@@ -2,6 +2,7 @@ import std/[sets, strutils, tables, options]
 import ./sysio
 import ./changes
 import ./config
+import ./track
 import ./adapters/manifest
 
 type
@@ -254,7 +255,10 @@ proc affectedPackageNames*(
 
   for rawChangedPath in changedPaths:
     let changedPath = normalizeRepoPath(rawChangedPath)
-    if changedPath.startsWith(ChangesRelPrefix):
+    # nimver's own bookkeeping, not anyone's source. Left in, the track file
+    # would mark every package affected under `sharedChanges = all`, so merely
+    # entering a track would put a line in every changelog.
+    if changedPath.startsWith(ChangesRelPrefix) or changedPath == TrackRelPath:
       continue
 
     let owningIndex = workspace.owningPackageIndex(changedPath)

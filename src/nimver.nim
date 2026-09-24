@@ -7,6 +7,7 @@ import ./commands/version
 import ./commands/installHooks
 import ./commands/checkCommitMsg
 import ./commands/bump
+import ./commands/track
 
 const Usage = """
 nimver - semantic versioning from Conventional Commits
@@ -15,6 +16,9 @@ Usage:
   nimver init
   nimver install-hooks [--force]
   nimver bump [<package>] [--dry-run]
+  nimver track
+  nimver track enter <name> [--package <name>]
+  nimver track exit [--package <name>]
   nimver version
 
 See https://github.com/vinpogo/nimver for details.
@@ -70,6 +74,8 @@ when isMainModule:
         else:
           none(string)
       cmdBump(repoRoot, requestedPackageName, "--dry-run" in params)
+    of "track":
+      cmdTrack(repoRoot, params)
     else:
       echo Usage
       quit(1)

@@ -29,7 +29,7 @@ jobs:
 
       - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
-          nim-version: "2.2.10"
+          nim-version: "2.2.12"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build binary
@@ -56,7 +56,7 @@ jobs:
 
       - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
         with:
-          nim-version: "2.2.10"
+          nim-version: "2.2.12"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -78,12 +78,34 @@ jobs:
       - name: Check what would be published
         run: npm pack --dry-run
 
+      - name: Work out which track this tag is on
+        # `v1.2.0-alpha.1` is a prerelease on track `alpha`; `v1.2.0` is a
+        # release. Everything after the version's `-`, up to the iteration.
+        id: track
+        shell: bash
+        run: |
+          suffix="${GITHUB_REF_NAME##*-}"
+          if [ "$suffix" = "$GITHUB_REF_NAME" ]; then
+            echo "name=" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${suffix%.*}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
         # Authentication is the OIDC trusted publisher configured on npmjs.com,
         # so there is no token to leak here. Provenance comes with it; the flag
         # is kept so an unattested publish fails rather than passing quietly.
+        #
+        # A prerelease goes to a dist-tag named after its track. npm does not
+        # infer that from the version, so without `--tag` an alpha would become
+        # what `npm install @vingy/nimver` gives everyone.
         if: startsWith(github.ref, 'refs/tags/v')
-        run: npm publish --provenance --access public
+        run: |
+          if [ -n "${{ steps.track.outputs.name }}" ]; then
+            npm publish --provenance --access public --tag "${{ steps.track.outputs.name }}"
+          else
+            npm publish --provenance --access public
+          fi
 
   publish:
     name: github release
@@ -104,3 +126,6 @@ jobs:
           body: >-
             [Changelog for ${{ github.ref_name }}](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/CHANGELOG.md)
           generate_release_notes: true
+          # A tag carrying a track is a prerelease, and GitHub should say so
+          # rather than offer it as the latest.
+          prerelease: ${{ contains(github.ref_name, '-') }}

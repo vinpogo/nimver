@@ -151,3 +151,46 @@ suite "manifest adapters":
     check "## [package.json 0.1.1]" in changelog
     check "## [pkg.nimble 0.1.1]" in changelog
     check changelog.find("## [package.json") < changelog.find("## [pkg.nimble")
+
+  test "a prerelease version is written into a Nimble manifest, formatting intact":
+    # The track lives in the manifest too, so what is published is a real
+    # prerelease rather than something indistinguishable from the release.
+    let dir = freshRepo("prerelease-nimble")
+    writeFile(
+      dir / "pkg.nimble",
+      "name = \"pkg\"\nversion       = '0.1.0' # release version\nauthor = \"Test\"\n",
+    )
+    discard run("git add pkg.nimble", dir)
+    discard run("git commit -q --no-verify -m \"chore: format manifest\"", dir)
+    discard run("git tag v0.1.0", dir)
+    check run("nimver track enter alpha", dir).code == 0
+    discard commitFile(dir, "a.txt", "hi", "fix: patch")
+
+    check run("nimver bump", dir).code == 0
+    let manifest = readFile(dir / "pkg.nimble")
+    check "version       = '0.1.1-alpha.1' # release version" in manifest
+    check "name = \"pkg\"" in manifest
+
+  test "a prerelease version is written into package.json":
+    let dir = freshPackageRepo("prerelease-package-json")
+    discard run("git tag v0.1.0", dir)
+    check run("nimver track enter rc", dir).code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a feature")
+
+    check run("nimver bump", dir).code == 0
+    let manifest = parseJson(readFile(dir / "package.json"))
+    check manifest["version"].getStr() == "0.2.0-rc.1"
+    check manifest["private"].getBool() # the rest of the file is left alone
+
+  test "a prerelease in the manifest is bumped from the release behind it":
+    # Not from its own core: 0.2.0-rc.1 already is the result of bumping 0.1.0,
+    # so paying for the same minor twice would give 0.3.0.
+    let dir = freshPackageRepo("prerelease-base")
+    discard run("git tag v0.1.0", dir)
+    check run("nimver track enter rc", dir).code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a feature")
+    check run("nimver bump", dir).code == 0
+    discard commitFile(dir, "b.txt", "hi", "fix: a fix")
+    check run("nimver bump", dir).code == 0
+
+    check parseJson(readFile(dir / "package.json"))["version"].getStr() == "0.2.0-rc.2"

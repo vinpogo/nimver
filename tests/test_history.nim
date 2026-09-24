@@ -310,3 +310,80 @@ suite "history":
     check "pre-release feature" notin dryRun2
     # Web-only commit is not attributed to cli.
     check "web-only change" notin dryRun2
+
+suite "which tags bound a range":
+  ## Bounding a range and reading a version are two questions. A tag whose
+  ## version nobody can parse still bounds one, exactly as it did before tracks
+  ## existed - deciding otherwise would unbound such a repository and make its
+  ## next release swallow the whole history.
+
+  test "a prerelease tag does not end a release's range":
+    # The central regression: off a track, the release covers the whole cycle,
+    # so the alphas behind it must not cut it short.
+    let dir = freshRepo("history-prerelease-not-a-boundary")
+    discard commitFile(dir, "a.txt", "hi", "feat: before the alpha")
+    discard run("git tag v0.2.0-alpha.1", dir)
+    discard commitFile(dir, "b.txt", "hi", "fix: after the alpha")
+
+    let dryRun = pending(dir)
+    check "feat: before the alpha" in dryRun
+    check "fix: after the alpha" in dryRun
+
+  test "a prerelease tag does end another prerelease's range":
+    let dir = freshRepo("history-prerelease-is-a-boundary")
+    discard run("git tag v0.1.0", dir)
+    discard commitFile(dir, "a.txt", "hi", "feat: before the alpha")
+    check run("nimver track enter alpha", dir).code == 0
+    check run("nimver bump", dir).code == 0
+    discard commitFile(dir, "b.txt", "hi", "fix: after the alpha")
+
+    let dryRun = pending(dir)
+    check "fix: after the alpha" in dryRun
+    check "feat: before the alpha" notin dryRun
+
+  test "a suffix nimver did not write still bounds a range":
+    # `v0.2.0-rc1` has no iteration and `v0.2.0-hotfix` no shape at all, so
+    # neither is a track of ours - and both went on bounding ranges long before
+    # tracks existed.
+    for tagName in ["v0.2.0-rc1", "v0.2.0-hotfix", "v0.2.0-SNAPSHOT"]:
+      let dir = freshRepo("history-foreign-suffix-" & tagName.replace(".", ""))
+      discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
+      discard run("git tag " & tagName, dir)
+      discard commitFile(dir, "b.txt", "hi", "fix: in front of it")
+
+      let dryRun = pending(dir)
+      check "fix: in front of it" in dryRun
+      check "behind the tag" notin dryRun
+
+  test "a version tag nobody can read still bounds a range":
+    for tagName in ["v1.0", "v2", "v20240101"]:
+      let dir = freshRepo("history-unreadable-" & tagName)
+      discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
+      discard run("git tag " & tagName, dir)
+      discard commitFile(dir, "b.txt", "hi", "fix: in front of it")
+
+      let dryRun = pending(dir)
+      check "fix: in front of it" in dryRun
+      check "behind the tag" notin dryRun
+
+  test "a tag in nobody's scheme bounds nothing":
+    let dir = freshRepo("history-unrecognised-tag")
+    discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
+    discard run("git tag release-2024-01", dir)
+    discard commitFile(dir, "b.txt", "hi", "fix: in front of it")
+
+    check "behind the tag" in pending(dir)
+
+  test "an unreadable boundary is no base, so a track is refused rather than guessed":
+    # `v1.0` says where the history ends but not at which version, and inventing
+    # one would move the manifest somewhere nobody asked for.
+    let dir = freshRepo("history-unreadable-is-no-base")
+    discard run("git tag v1.0", dir)
+    check run("nimver track enter alpha", dir).code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+    check run("nimver bump", dir).code == 0 # the manifest is still a release
+    discard commitFile(dir, "b.txt", "hi", "fix: b")
+
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    check "no release tag" in refused.output
