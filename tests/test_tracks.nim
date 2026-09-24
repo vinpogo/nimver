@@ -16,23 +16,23 @@ suite "the rules a track's version follows":
     discard commitFile(dir, "a.txt", "hi", "fix: a")
 
     check run("nimver bump", dir).code == 0
-    check "v0.2.1-alpha.1" in tags(dir)
-    check manifestVersion(dir, "pkg.nimble") == "0.2.1-alpha.1"
+    check "v1.1.1-alpha.1" in tags(dir)
+    check manifestVersion(dir, "pkg.nimble") == "1.1.1-alpha.1"
 
   test "levels do not accumulate: a second feat moves the iteration, not the core":
     # The range since the last release is [feat, feat], whose highest level is
-    # still minor. A core of 0.4.0 would mean levels adding up, which they do
+    # still minor. A core of 1.3.0 would mean levels adding up, which they do
     # not.
     let dir = freshReleasedRepo("track-levels-do-not-stack")
     check setTrack(dir, "enter alpha").code == 0
     discard commitFile(dir, "a.txt", "hi", "feat: a")
     check run("nimver bump", dir).code == 0
-    check "v0.3.0-alpha.1" in tags(dir)
+    check "v1.2.0-alpha.1" in tags(dir)
 
     discard commitFile(dir, "b.txt", "hi", "feat: b")
     check run("nimver bump", dir).code == 0
-    check "v0.3.0-alpha.2" in tags(dir)
-    check "v0.4.0-alpha.1" notin tags(dir)
+    check "v1.2.0-alpha.2" in tags(dir)
+    check "v1.3.0-alpha.1" notin tags(dir)
 
   test "changing track keeps the core and restarts the iteration":
     let dir = freshReleasedRepo("track-change-restarts")
@@ -41,22 +41,22 @@ suite "the rules a track's version follows":
     check run("nimver bump", dir).code == 0
     discard commitFile(dir, "b.txt", "hi", "fix: b")
     check run("nimver bump", dir).code == 0
-    check "v0.2.1-alpha.2" in tags(dir)
+    check "v1.1.1-alpha.2" in tags(dir)
 
     check setTrack(dir, "enter beta").code == 0
     discard commitFile(dir, "c.txt", "hi", "fix: c")
     check run("nimver bump", dir).code == 0
-    check "v0.2.1-beta.1" in tags(dir)
+    check "v1.1.1-beta.1" in tags(dir)
 
     # Only what came after the last prerelease, not the whole track.
     let changelog = readFile(dir / "CHANGELOG.md")
-    let betaSection = changelog.split("## [0.2.1-beta.1]")[1].split("## [")[0]
+    let betaSection = changelog.split("## [1.1.1-beta.1]")[1].split("## [")[0]
     check "fix: c" in betaSection
     check "fix: a" notin betaSection
 
   test "the base is the last release, not the manifest":
-    # At 0.2.1-alpha.1 the manifest's core is already the result of bumping
-    # 0.2.0. Bumping it again would pay for the same patch twice.
+    # At 1.1.1-alpha.1 the manifest's core is already the result of bumping
+    # 1.1.0. Bumping it again would pay for the same patch twice.
     let dir = freshReleasedRepo("track-base-is-the-tag")
     check setTrack(dir, "enter alpha").code == 0
     discard commitFile(dir, "a.txt", "hi", "fix: a")
@@ -64,8 +64,8 @@ suite "the rules a track's version follows":
     discard commitFile(dir, "b.txt", "hi", "fix: b")
     check run("nimver bump", dir).code == 0
 
-    check "v0.2.1-alpha.2" in tags(dir)
-    check "v0.2.2-alpha.1" notin tags(dir)
+    check "v1.1.1-alpha.2" in tags(dir)
+    check "v1.1.2-alpha.1" notin tags(dir)
 
 suite "a track from end to end":
   test "alpha, then beta, then the release that covers the whole cycle":
@@ -74,30 +74,30 @@ suite "a track from end to end":
 
     discard commitFile(dir, "a.txt", "hi", "feat: a")
     check run("nimver bump", dir).code == 0
-    check "v0.3.0-alpha.1" in tags(dir)
-    check "## [0.3.0-alpha.1]" in readFile(dir / "CHANGELOG.md")
+    check "v1.2.0-alpha.1" in tags(dir)
+    check "## [1.2.0-alpha.1]" in readFile(dir / "CHANGELOG.md")
 
     discard commitFile(dir, "b.txt", "hi", "fix: b")
     check run("nimver bump", dir).code == 0
-    check "v0.3.0-alpha.2" in tags(dir)
+    check "v1.2.0-alpha.2" in tags(dir)
 
     discard commitFile(dir, "c.txt", "hi", "feat!: c")
     check run("nimver bump", dir).code == 0
-    check "v1.0.0-alpha.1" in tags(dir) # the core moved, so the iteration restarts
+    check "v2.0.0-alpha.1" in tags(dir) # the core moved, so the iteration restarts
 
     check setTrack(dir, "enter beta").code == 0
     discard commitFile(dir, "d.txt", "hi", "fix: d")
     check run("nimver bump", dir).code == 0
-    check "v1.0.0-beta.1" in tags(dir)
+    check "v2.0.0-beta.1" in tags(dir)
 
     check setTrack(dir, "exit").code == 0
     check run("nimver bump", dir).code == 0
-    check "v1.0.0" in tags(dir)
-    check manifestVersion(dir, "pkg.nimble") == "1.0.0"
+    check "v2.0.0" in tags(dir)
+    check manifestVersion(dir, "pkg.nimble") == "2.0.0"
 
     # The release covers the cycle, not just what came after the last beta.
     let changelog = readFile(dir / "CHANGELOG.md")
-    let releaseSection = changelog.split("## [1.0.0]")[1].split("## [")[0]
+    let releaseSection = changelog.split("## [2.0.0]")[1].split("## [")[0]
     for subject in ["feat: a", "fix: b", "feat!: c", "fix: d"]:
       check subject in releaseSection
 
@@ -115,26 +115,26 @@ suite "a track from end to end":
 suite "a track needs a release to build on":
   test "a repository with no release tag is warned on entering, and refused on the bump":
     let dir = freshRepo("track-without-a-release")
-    discard run("git tag -d v0.1.0", dir)
+    discard run("git tag -d v1.0.0", dir)
     let entered = setTrack(dir, "enter alpha")
     check entered.code == 0
     check "no release tag" in entered.output
-    check "git tag v0.1.0" in entered.output
+    check "git tag v1.0.0" in entered.output
 
     discard commitFile(dir, "a.txt", "hi", "feat: a")
     let refused = run("nimver bump", dir)
     check refused.code != 0
     check "no release tag" in refused.output
-    check "git tag v0.1.0" in refused.output
-      # not `pkg-v0.1.0`, which is not this repo's shape
+    check "git tag v1.0.0" in refused.output
+      # not `pkg-v1.0.0`, which is not this repo's shape
 
   test "a prerelease manifest leaves no version to advise tagging":
     # Once the first prerelease is written the manifest is no record of
     # anything that went out, so the advice has to fall back to a placeholder.
     let dir = freshRepo("track-prerelease-manifest-no-advice")
-    discard run("git tag -d v0.1.0", dir)
+    discard run("git tag -d v1.0.0", dir)
     check setTrack(dir, "enter alpha").code == 0
-    writeFile(dir / "pkg.nimble", "version = \"0.2.0-alpha.1\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.1.0-alpha.1\"\n")
     discard commitFile(dir, "a.txt", "hi", "fix: b")
 
     let refused = run("nimver bump", dir)
@@ -144,14 +144,14 @@ suite "a track needs a release to build on":
 
   test "tagging the version it is already on is what fixes it":
     let dir = freshRepo("track-tagging-fixes-it")
-    discard run("git tag -d v0.1.0", dir)
+    discard run("git tag -d v1.0.0", dir)
     check setTrack(dir, "enter alpha").code == 0
     discard commitFile(dir, "a.txt", "hi", "fix: a")
     check run("nimver bump", dir).code != 0
 
-    discard run("git tag v0.1.0 HEAD~1", dir)
+    discard run("git tag v1.0.0 HEAD~1", dir)
     check run("nimver bump", dir).code == 0
-    check "v0.1.1-alpha.1" in tags(dir)
+    check "v1.0.1-alpha.1" in tags(dir)
 
 suite "saying which track you are on":
   test "a fresh repository is on none":
@@ -206,7 +206,7 @@ suite "a track warns while it is on":
     let warned = pending(dir)
     check "releasing on track 'alpha'" in warned
     check "nimver track exit" in warned
-    check "Would tag v0.2.1-alpha.1" in warned
+    check "Would tag v1.1.1-alpha.1" in warned
 
 suite "tracks in an independent workspace":
   test "one package can be on a track while its sibling releases plainly":
@@ -220,8 +220,8 @@ suite "tracks in an independent workspace":
     discard commitFile(dir, "packages/cli/b.txt", "hi", "fix: cli again")
     check run("nimver bump", dir).code == 0
 
-    check "web-v0.2.1-alpha.1" in tags(dir)
-    check "cli-v0.2.1" in tags(dir)
+    check "web-v1.1.1-alpha.1" in tags(dir)
+    check "cli-v1.1.1" in tags(dir)
 
   test "a repo-wide track applies to whoever has no say of their own":
     let dir = freshWorkspaceRepo("track-workspace-default", strategy = "independent")
@@ -235,8 +235,8 @@ suite "tracks in an independent workspace":
     discard commitFile(dir, "packages/cli/b.txt", "hi", "fix: cli again")
     check run("nimver bump", dir).code == 0
 
-    check "web-v0.2.1-alpha.1" in tags(dir) # its own override stands
-    check "cli-v0.2.1-beta.1" in tags(dir) # the default reaches the rest
+    check "web-v1.1.1-alpha.1" in tags(dir) # its own override stands
+    check "cli-v1.1.1-beta.1" in tags(dir) # the default reaches the rest
 
   test "a package can come off the track while the rest stay on":
     let dir = freshWorkspaceRepo("track-workspace-exit-one", strategy = "independent")
@@ -250,8 +250,8 @@ suite "tracks in an independent workspace":
     discard commitFile(dir, "packages/cli/b.txt", "hi", "fix: cli again")
     check run("nimver bump", dir).code == 0
 
-    check "web-v0.2.1" in tags(dir)
-    check "cli-v0.2.1-beta.1" in tags(dir)
+    check "web-v1.1.1" in tags(dir)
+    check "cli-v1.1.1-beta.1" in tags(dir)
 
   test "a fixed workspace has one version, so it refuses a per-package track":
     let dir = freshWorkspaceRepo("track-workspace-fixed", strategy = "fixed")
@@ -295,3 +295,118 @@ suite "tracks on parallel lines of development":
     check run("nimver bump", dir).code == 0
 
     check "v1.1.1-alpha.1" in tags(dir)
+
+suite "promoting to 1.0.0 on a track":
+  ## `--stable` is said once, on the way in, and the whole cycle holds to it:
+  ## every iteration, and the release that ends it.
+
+  test "track enter --stable cuts 1.0.0 on the first iteration, and holds it on the next":
+    # The regression test for the pin. The base is still 0.4.2 for the whole
+    # cycle - the manifest stopped being one the moment the first prerelease
+    # was written - so a second `fix:` bumped from that base would cut
+    # v0.4.3-rc.1 and walk the version back down off 1.0.0.
+    let dir = freshReleasedRepo("stable-track-cycle", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check run("nimver bump", dir).code == 0
+    check "v1.0.0-rc.1" in tags(dir)
+
+    discard commitFile(dir, "b.txt", "hi", "fix: b")
+    check run("nimver bump", dir).code == 0
+    check "v1.0.0-rc.2" in tags(dir)
+    check "v0.4.4-rc.1" notin tags(dir)
+
+  test "a break inside the cycle moves the iteration, not the core":
+    # Once pinned, the level the commits add up to decides nothing: 1.0.0 is
+    # the version being cut, and a break can only take the major once it has
+    # actually been released.
+    let dir = freshReleasedRepo("stable-track-break-inside", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check run("nimver bump", dir).code == 0
+
+    discard commitFile(dir, "b.txt", "hi", "feat!: a break mid-cycle")
+    check run("nimver bump", dir).code == 0
+    check "v1.0.0-rc.2" in tags(dir)
+    check "v2.0.0-rc.1" notin tags(dir)
+
+  test "the promotion survives coming off the track":
+    let dir = freshReleasedRepo("stable-track-exit", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+    check run("nimver bump", dir).code == 0
+
+    check setTrack(dir, "exit").code == 0
+    discard commitFile(dir, "b.txt", "hi", "fix: b")
+    check run("nimver bump", dir).code == 0
+    check "v1.0.0" in tags(dir)
+    check manifestVersion(dir, "pkg.nimble") == "1.0.0"
+
+    # The release covers the whole cycle, prereleases included.
+    let releaseSection =
+      readFile(dir / "CHANGELOG.md").split("## [1.0.0]")[1].split("## [")[0]
+    check "feat: a" in releaseSection
+    check "fix: b" in releaseSection
+
+  test "the iteration restarts at 1 even though the old core had prereleases":
+    # Numbering is per (track, core), and 1.0.0 is not the core those were cut
+    # against.
+    let dir = freshReleasedRepo("stable-track-iteration", version = "0.4.2")
+    check setTrack(dir, "enter rc").code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+    check run("nimver bump", dir).code == 0
+    check "v0.4.4-rc.1" in tags(dir)
+
+    check setTrack(dir, "enter rc --stable").code == 0
+    discard commitFile(dir, "b.txt", "hi", "fix: b")
+    check run("nimver bump", dir).code == 0
+    check "v1.0.0-rc.1" in tags(dir)
+
+  test "--stable is not needed twice, and is refused if given":
+    let dir = freshReleasedRepo("stable-track-twice", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check run("nimver bump", dir).code == 0
+
+    discard commitFile(dir, "b.txt", "hi", "fix: b")
+    let refused = run("nimver bump --stable", dir)
+    check refused.code != 0
+    check "already at 1.0.0-rc.1" in refused.output
+
+  test "entering the track again without --stable takes the promise back":
+    let dir = freshReleasedRepo("stable-track-retracted", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+    check setTrack(dir, "enter rc").code == 0
+    check readFile(dir / ".nimver" / "track").strip() == "rc"
+
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check run("nimver bump", dir).code == 0
+    check "v0.4.4-rc.1" in tags(dir)
+
+  test "a package already past 1.0.0 ignores a recorded --stable":
+    # `siRecorded` goes quietly inert where `--stable` on the run would refuse:
+    # the marker is a standing instruction, not a request to act now.
+    let dir = freshReleasedRepo("stable-track-inert")
+    check setTrack(dir, "enter rc --stable").code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+
+    check run("nimver bump", dir).code == 0
+    check "v1.2.0-rc.1" in tags(dir)
+
+  test "track exit --stable is refused":
+    let dir = freshReleasedRepo("stable-track-exit-flag", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+
+    let refused = setTrack(dir, "exit --stable")
+    check refused.code != 0
+    check "`track exit` cuts none" in refused.output
+    check readFile(dir / ".nimver" / "track").strip() == "rc!"
+
+  test "the track report and the bump warning both say it is heading for 1.0.0":
+    let dir = freshReleasedRepo("stable-track-reported", version = "0.4.2")
+    check setTrack(dir, "enter rc --stable").code == 0
+    check "entered with --stable" in setTrack(dir, "").output
+
+    discard commitFile(dir, "a.txt", "hi", "fix: a")
+    check "entered with `--stable`" in pending(dir)

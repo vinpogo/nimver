@@ -10,19 +10,19 @@ suite "history":
     # committing, so there is nothing that can fall out of step with a message.
     let dir = freshRepo("history-follows-message")
     check commitFile(dir, "a.txt", "hi", "fix: a").code == 0
-    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in pending(dir)
 
     check run("git commit --amend -q -m \"feat: a\"", dir).code == 0
-    check "0.1.0 -> 0.2.0 (minor)" in pending(dir)
+    check "1.0.0 -> 1.1.0 (minor)" in pending(dir)
 
     check run("git commit --amend -q -m \"feat!: a\"", dir).code == 0
-    check "0.1.0 -> 1.0.0 (major)" in pending(dir)
+    check "1.0.0 -> 2.0.0 (major)" in pending(dir)
 
     # Amending the *content* leaves the message, and so the change, alone.
     writeFile(dir / "a.txt", "more")
     discard run("git add -A", dir)
     check run("git commit --amend -q --no-edit", dir).code == 0
-    check "0.1.0 -> 1.0.0 (major)" in pending(dir)
+    check "1.0.0 -> 2.0.0 (major)" in pending(dir)
 
   test "unknownType is read from each commit's own tree, like every other mapping":
     # Turning the fallback on today does not retroactively make yesterday's
@@ -45,7 +45,7 @@ suite "history":
     check commitFile(dir, "b.txt", "hi", "net/http: rework the dialer").code == 0
 
     let permissive = pending(dir)
-    check "0.1.0 -> 0.2.0 (minor)" in permissive
+    check "1.0.0 -> 1.1.0 (minor)" in permissive
     check "rework the dialer" in permissive
     # The earlier commit was made under a config that rejected it, and still is.
     check "unknown commit type 'net/http'" in permissive
@@ -56,7 +56,7 @@ suite "history":
     discard commitFile(dir, "a.txt", "hi", "fix: a")
     discard commitFile(dir, "b.txt", "hi", "fix: b")
     discard commitFile(dir, "c.txt", "hi", "fix: c")
-    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in pending(dir)
 
     let (rebaseOutput, rebaseCode) = rebaseInteractive(
       dir,
@@ -71,7 +71,7 @@ suite "history":
     check run("git status --porcelain", dir).output.strip().len == 0
 
     let dryRun = pending(dir)
-    check "0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
     check "- feat: b is bigger than thought" in dryRun
     check "- fix: a" in dryRun
 
@@ -89,7 +89,7 @@ suite "history":
     # Same changes, so the same release - only the order the changelog lists
     # them in follows the history.
     let dryRun = pending(dir)
-    check "0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
     check "- feat: a" in dryRun
     check "- fix: b" in dryRun
 
@@ -107,7 +107,7 @@ suite "history":
     check rebaseCode == 0
 
     let dryRun = pending(dir)
-    check "0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
     check "- feat: a and b together" in dryRun
     # The two commits it was made of are gone, so neither is listed on its own.
     check "\n- feat: a\n" notin dryRun
@@ -120,19 +120,19 @@ suite "history":
 
     check commitFile(dir, "b.txt", "hi", "fix: real").code == 0
     let dryRun = pending(dir)
-    check "0.1.0 -> 0.1.1 (patch)" in dryRun
+    check "1.0.0 -> 1.0.1 (patch)" in dryRun
     check "not done" notin dryRun
 
   test "a released commit is not counted again":
     let dir = freshRepo("history-boundary-tag")
     discard commitFile(dir, "a.txt", "hi", "feat: a")
     check run("nimver bump", dir).code == 0
-    check "v0.2.0" in run("git tag", dir).output
+    check "v1.1.0" in run("git tag", dir).output
     check "Nothing to bump" in pending(dir)
 
     discard commitFile(dir, "b.txt", "hi", "fix: b")
     let dryRun = pending(dir)
-    check "0.2.0 -> 0.2.1 (patch)" in dryRun
+    check "1.1.0 -> 1.1.1 (patch)" in dryRun
     check "- a" notin dryRun # already released
 
   test "a repository adopting nimver is refused until it says where its past ends":
@@ -146,7 +146,7 @@ suite "history":
     discard run("git init -q", dir)
     discard run("git config user.email test@example.com", dir)
     discard run("git config user.name Test", dir)
-    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.0.0\"\n")
     discard run("git add -A", dir)
     discard run("git commit -q -m \"feat: from another life\"", dir)
 
@@ -156,13 +156,13 @@ suite "history":
     let refused = run("nimver bump", dir)
     check refused.code != 0
     check "no release tag" in refused.output
-    check "git tag v0.1.0" in refused.output
+    check "git tag v1.0.0" in refused.output
 
-    discard run("git tag v0.1.0 HEAD", dir)
+    discard run("git tag v1.0.0 HEAD", dir)
     check commitFile(dir, "a.txt", "hi", "fix: the first with nimver").code == 0
 
     let dryRun = pending(dir)
-    check "0.1.0 -> 0.1.1 (patch)" in dryRun
+    check "1.0.0 -> 1.0.1 (patch)" in dryRun
     check "- fix: the first with nimver" in dryRun
     check "another life" notin dryRun
 
@@ -171,7 +171,7 @@ suite "history":
     # mapping today must not rewrite what last week's commits meant.
     let dir = freshRepo("history-config-snapshot")
     check commitFile(dir, "a.txt", "hi", "fix: a").code == 0
-    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in pending(dir)
 
     let configFile = dir / ".nimver" / "config.ini"
     writeFile(configFile, readFile(configFile).replace("fix = patch", "fix = major"))
@@ -179,10 +179,10 @@ suite "history":
     discard run("git commit -q -m \"chore: fixes are major from now on\"", dir)
 
     # The earlier commit keeps the meaning it was made with...
-    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in pending(dir)
     # ...while a new one takes the mapping as it now stands.
     check commitFile(dir, "b.txt", "hi", "fix: b").code == 0
-    check "0.1.0 -> 1.0.0 (major)" in pending(dir)
+    check "1.0.0 -> 2.0.0 (major)" in pending(dir)
 
   test "a package added mid-cycle does not claim changes made before it":
     # The layout is read from each commit's own tree, so `cli` cannot pick up a
@@ -191,7 +191,7 @@ suite "history":
       "history-package-added", sharedChanges = "none", strategy = "independent"
     )
     createDir(dir / "packages" / "extra")
-    writeFile(dir / "packages" / "extra" / "extra.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "packages" / "extra" / "extra.nimble", "version = \"1.0.0\"\n")
     check commitFile(
       dir, "packages/web/index.js", "export {}\n", "feat: web only, for now"
     ).code == 0
@@ -206,7 +206,7 @@ suite "history":
     discard run("git commit -q --no-verify -m \"chore: declare extra\"", dir)
 
     let dryRun = pending(dir)
-    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.1.0 (minor)" in dryRun
     check "extra" notin dryRun
 
   test "flat release tag remains the boundary after the workspace gains a second package":
@@ -327,7 +327,7 @@ suite "which tags bound a range":
     # so the alphas behind it must not cut it short.
     let dir = freshRepo("history-prerelease-not-a-boundary")
     discard commitFile(dir, "a.txt", "hi", "feat: before the alpha")
-    discard run("git tag v0.2.0-alpha.1", dir)
+    discard run("git tag v1.1.0-alpha.1", dir)
     discard commitFile(dir, "b.txt", "hi", "fix: after the alpha")
 
     let dryRun = pending(dir)
@@ -346,10 +346,10 @@ suite "which tags bound a range":
     check "feat: before the alpha" notin dryRun
 
   test "a suffix nimver did not write still bounds a range":
-    # `v0.2.0-rc1` has no iteration and `v0.2.0-hotfix` no shape at all, so
+    # `v1.1.0-rc1` has no iteration and `v1.1.0-hotfix` no shape at all, so
     # neither is a track of ours - and both went on bounding ranges long before
     # tracks existed.
-    for tagName in ["v0.2.0-rc1", "v0.2.0-hotfix", "v0.2.0-SNAPSHOT"]:
+    for tagName in ["v1.1.0-rc1", "v1.1.0-hotfix", "v1.1.0-SNAPSHOT"]:
       let dir = freshRepo("history-foreign-suffix-" & tagName.replace(".", ""))
       discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
       discard run("git tag " & tagName, dir)
@@ -365,7 +365,7 @@ suite "which tags bound a range":
     # a range on one would only leave a base to be guessed at.
     for tagName in ["v1.0", "v2", "v20240101"]:
       let dir = freshRepo("history-unreadable-" & tagName)
-      discard run("git tag -d v0.1.0", dir)
+      discard run("git tag -d v1.0.0", dir)
       discard commitFile(dir, "a.txt", "hi", "feat: behind the tag")
       discard run("git tag " & tagName, dir)
       discard commitFile(dir, "b.txt", "hi", "fix: in front of it")
@@ -373,7 +373,7 @@ suite "which tags bound a range":
       let refused = run("nimver bump", dir)
       check refused.code != 0
       check "no release tag" in refused.output
-      check "git tag v0.1.0" in refused.output
+      check "git tag v1.0.0" in refused.output
 
   test "a tag in nobody's scheme bounds nothing":
     let dir = freshRepo("history-unrecognised-tag")
@@ -389,7 +389,7 @@ suite "which tags bound a range":
     let dir = freshRepo("history-unreadable-sibling")
     discard commitFile(dir, "a.txt", "hi", "feat: behind the tags")
     discard run("git tag v1.0", dir)
-    discard run("git tag v0.2.0", dir)
+    discard run("git tag v1.1.0", dir)
     discard commitFile(dir, "b.txt", "hi", "fix: in front of them")
 
     let dryRun = pending(dir)

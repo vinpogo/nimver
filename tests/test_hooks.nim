@@ -16,7 +16,7 @@ suite "hooks":
     check run("git status --porcelain", dir).output.strip().len == 0
     check ".nimver/changes" notin run("git show --name-only --pretty= HEAD", dir).output
     check "a.txt" in run("git show --name-only --pretty= HEAD", dir).output
-    check "0.1.0 -> 0.2.0 (minor)" in pending(dir)
+    check "1.0.0 -> 1.1.0 (minor)" in pending(dir)
 
   test "invalid commit type is rejected by the commit-msg hook":
     let dir = freshRepo("invalid-type")
@@ -44,7 +44,7 @@ suite "hooks":
   test "breaking change forces a major bump regardless of type mapping":
     let dir = freshRepo("breaking")
     check commitFile(dir, "a.txt", "hi", "fix!: breaking fix").code == 0
-    check "-> 1.0.0 (major)" in pending(dir)
+    check "-> 2.0.0 (major)" in pending(dir)
 
   test "an unlisted type is accepted once unknownType names a level":
     let dir = freshRepo("permissive-types")
@@ -56,7 +56,7 @@ suite "hooks":
     discard run("git commit -q -m \"chore: accept other conventions\"", dir)
 
     check commitFile(dir, "b.txt", "hi", "net/http: rework the dialer").code == 0
-    check "0.1.0 -> 0.1.1 (patch)" in pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in pending(dir)
 
   test "the bump mapping comes from config.ini":
     let dir = freshRepo("config-driven")
@@ -66,7 +66,7 @@ suite "hooks":
     discard run("git commit -q -m \"chore: fixes are major\"", dir)
 
     check commitFile(dir, "a.txt", "hi", "fix: b").code == 0
-    check "-> 1.0.0 (major)" in pending(dir)
+    check "-> 2.0.0 (major)" in pending(dir)
 
   test "a commit made with --no-verify still counts, and is reported if unusable":
     # The hook is the only thing checking messages, so bypassing it can leave a
@@ -76,7 +76,7 @@ suite "hooks":
     discard run("git add -A", dir)
     check run("git commit -q --no-verify -m \"feat: slipped past the hook\"", dir).code ==
       0
-    check "0.1.0 -> 0.2.0 (minor)" in pending(dir)
+    check "1.0.0 -> 1.1.0 (minor)" in pending(dir)
 
     writeFile(dir / "b.txt", "hi")
     discard run("git add -A", dir)
@@ -110,7 +110,7 @@ suite "hooks":
     r = run("nimver init", linked)
     check r.code == 0
     check commitFile(linked, "a.txt", "hi", "feat: add a").code == 0
-    check "0.1.0 -> 0.2.0 (minor)" in pending(linked)
+    check "1.0.0 -> 1.1.0 (minor)" in pending(linked)
     check commitFile(linked, "b.txt", "hi", "bogus: nope").code != 0
 
   test "install-hooks clears out the hooks earlier versions left behind":

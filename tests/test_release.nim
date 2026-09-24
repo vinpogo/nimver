@@ -27,6 +27,8 @@ proc release(
     changelogPath = "CHANGELOG.md",
     entries = @[entry(blMinor)],
     trackLevel = blIgnore,
+    cutLevel = blIgnore,
+    cutsFirstStable = false,
 ): PackageRelease =
   PackageRelease(
     name: name,
@@ -35,6 +37,10 @@ proc release(
     current: parseSemVer("0.1.0"),
     next: parseSemVer(next),
     level: level,
+    # At 1.0.0 and above the two are one: nothing is held, so a release that is
+    # not about the holding says so by leaving them equal.
+    cutLevel: if cutLevel == blIgnore: level else: cutLevel,
+    cutsFirstStable: cutsFirstStable,
     # Off a track the two walks are one walk, so the two levels agree. Only a
     # release on a track can have `level` say `minor` while `trackLevel` says
     # there is nothing new to cut.
@@ -81,6 +87,34 @@ suite "whether there is anything to release":
     let planned = release("cli", "0.1.0", blNone, entries = @[entry(blNone)])
     check planned.hasPendingChanges()
     check not planned.isReleasable()
+
+  test "a first stable release is releasable with nothing pending":
+    # Cutting 1.0.0 *is* the release. A ceremonial one has an empty section by
+    # design: the version is the announcement.
+    let planned = release(
+      "cli", "1.0.0", blNone, entries = @[], cutLevel = blMajor, cutsFirstStable = true
+    )
+    check not planned.hasPendingChanges()
+    check planned.isReleasable()
+
+suite "what the progress line says the bump was":
+  test "an unheld bump names its level and nothing else":
+    # Every release at 1.0.0 and above has to read exactly as it did before
+    # anything was held.
+    check release("cli", "1.1.0", blMinor).bumpReason() == "minor"
+    check release("cli", "2.0.0", blMajor).bumpReason() == "major"
+
+  test "a held bump names the level it cut and the one it held":
+    check release("cli", "0.5.0", blMajor, cutLevel = blMinor).bumpReason() ==
+      "minor, major held below 1.0.0"
+    check release("cli", "0.4.3", blMinor, cutLevel = blPatch).bumpReason() ==
+      "patch, minor held below 1.0.0"
+
+  test "a first stable release says so instead of a level":
+    # The changes behind it may add up to a patch, or to nothing at all, and
+    # naming either would describe a bump that did not happen.
+    check release("cli", "1.0.0", blPatch, cutLevel = blMajor, cutsFirstStable = true)
+      .bumpReason() == "stable"
 
 suite "folding changelog writes":
   test "one release writes its section":

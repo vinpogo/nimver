@@ -94,6 +94,11 @@ suite "bumping versions":
   test "a zero major stays below one":
     check $parseSemVer("0.1.0").bump(blMinor) == "0.2.0"
 
+  test "any 0.x bumped by a major lands on 1.0.0, which is what a promotion cuts":
+    # So the pinned version and the bumped one agree wherever both could apply.
+    for spelled in ["0.0.0", "0.0.3", "0.4.2", "0.99.7"]:
+      check parseSemVer(spelled).bump(blMajor) == FirstStableVersion
+
   test "bumping a prerelease yields a release":
     # A track is put back on afterwards, by whoever knows which one and at
     # which iteration.
@@ -117,6 +122,46 @@ suite "putting a version on a track":
   test "a rendered prerelease parses back to itself":
     for spelled in ["1.2.0-alpha.1", "0.1.0-rc.21", "10.0.3-nightly.100"]:
       check $parseSemVer(spelled) == spelled
+
+suite "staying below 1.0.0":
+  test "a major of zero is not stable, and a prerelease counts by its core":
+    # `1.0.0-rc.1` counting as stable is what makes a promotion stick across
+    # the iterations of a track: the shift is off from the first one on.
+    check not parseSemVer("0.0.0").isStable()
+    check not parseSemVer("0.9.9").isStable()
+    check not parseSemVer("0.9.0-rc.1").isStable()
+    check parseSemVer("1.0.0").isStable()
+    check parseSemVer("1.0.0-rc.1").isStable()
+    check parseSemVer("2.3.4").isStable()
+
+  test "below 1.0.0 a major takes the minor and a minor the patch":
+    # `^0.4.2` only ever promised 0.4.x, so 0.4 to 0.5 is already the break
+    # that 1.x spells as a major. Held on the level, so a project that maps its
+    # types differently is held the same way.
+    let unstable = parseSemVer("0.4.2")
+    check heldBelowStable(blMajor, unstable) == blMinor
+    check heldBelowStable(blMinor, unstable) == blPatch
+
+  test "patch is the floor: a held level never becomes nothing":
+    # Held any lower, a release with changes in it would have nothing left to
+    # cut, and `isReleasable` would contradict itself.
+    check heldBelowStable(blPatch, parseSemVer("0.4.2")) == blPatch
+
+  test "0.0.x is held exactly like any other 0.x":
+    let earliest = parseSemVer("0.0.3")
+    check heldBelowStable(blMajor, earliest) == blMinor
+    check heldBelowStable(blMinor, earliest) == blPatch
+
+  test "at 1.0.0 and above nothing is held":
+    for spelled in ["1.0.0", "1.0.0-rc.1", "4.2.0"]:
+      let stable = parseSemVer(spelled)
+      for level in BumpLevel:
+        check heldBelowStable(level, stable) == level
+
+  test "none and ignore are not bumps, so they are left where they are":
+    let unstable = parseSemVer("0.4.2")
+    check heldBelowStable(blNone, unstable) == blNone
+    check heldBelowStable(blIgnore, unstable) == blIgnore
 
 suite "bump levels":
   test "parsing is case-insensitive and ignores whitespace":

@@ -11,6 +11,7 @@ type TrackArguments = object
   subcommand: string
   trackName: string
   packageName: Option[string]
+  stable: bool
 
 proc parseArguments(arguments: seq[string]): TrackArguments =
   ## `--package <name>` / `-p <name>` rather than a positional, because
@@ -24,6 +25,10 @@ proc parseArguments(arguments: seq[string]): TrackArguments =
         raise newException(IOError, "`" & argument & "` needs a package name")
       result.packageName = some(arguments[index + 1])
       index += 2
+      continue
+    if argument == "--stable":
+      result.stable = true
+      index += 1
       continue
     if argument.startsWith("-"):
       raise
@@ -46,20 +51,38 @@ proc tagShape(trackName: string): string =
   else:
     "v<version>"
 
+proc promotionNote(track: Track): string =
+  ## True whether or not the marker has already been spent, which is what lets
+  ## this report keep its rule of reading nothing but the track file.
+  if track.promotesToStable:
+    ", entered with --stable: the first version cut below 1.0.0 is 1.0.0 itself"
+  else:
+    ""
+
 proc reportTracks(selection: TrackSelection) =
   ## Deliberately without loading the workspace: that needs every configured
   ## manifest to be on disk, and saying which track you are on should not
   ## depend on the repository being in one piece.
-  if selection.default.len > 0:
+  if selection.default.hasTrack():
     echo "On track '",
-      selection.default, "'. Versions are tagged ", tagShape(selection.default), "."
+      selection.default.name,
+      "'. Versions are tagged ",
+      tagShape(selection.default.name),
+      promotionNote(selection.default),
+      "."
   else:
     echo "Not on a track. Versions are tagged ", tagShape(""), "."
 
   for packageName in toSeq(selection.byPackage.keys()).sorted():
-    let trackName = selection.byPackage[packageName]
-    if trackName.len > 0:
-      echo "  ", packageName, ": track '", trackName, "', tagged ", tagShape(trackName)
+    let track = selection.byPackage[packageName]
+    if track.hasTrack():
+      echo "  ",
+        packageName,
+        ": track '",
+        track.name,
+        "', tagged ",
+        tagShape(track.name),
+        promotionNote(track)
     else:
       echo "  ", packageName, ": not on a track"
 
@@ -130,14 +153,19 @@ proc enterTrack(repoRoot: string, arguments: TrackArguments) =
         ".1` and the track written into the manifest version.",
     )
 
+  # The whole track is compared, not just its name: `enter rc --stable` while
+  # already on a plain `rc` has something to record, and `enter rc` after it
+  # takes the promise back.
+  let entering = Track(name: arguments.trackName, promotesToStable: arguments.stable)
+
   var selection = readTracks(repoRoot)
   if arguments.packageName.isSome:
     let package = checkedPackage(repoRoot, arguments.packageName.get)
-    if selection.trackFor(package.name).name == arguments.trackName:
+    if selection.trackFor(package.name) == entering:
       echo "Package '",
         package.name, "' is already on track '", arguments.trackName, "'."
       return
-    selection.byPackage[package.name] = arguments.trackName
+    selection.byPackage[package.name] = entering
     writeTracks(repoRoot, selection)
     echo "Package '",
       package.name,
@@ -147,27 +175,34 @@ proc enterTrack(repoRoot: string, arguments: TrackArguments) =
       tagShape(arguments.trackName),
       "."
   else:
-    if selection.default == arguments.trackName:
+    if selection.default == entering:
       echo "Already on track '", arguments.trackName, "'."
       return
-    selection.default = arguments.trackName
+    selection.default = entering
     writeTracks(repoRoot, selection)
     echo "On track '",
       arguments.trackName, "'. The next bump tags ", tagShape(arguments.trackName), "."
 
+  if arguments.stable:
+    echo "Entered with --stable: the first version cut on this track is 1.0.0, so no further flag is needed."
   warnWithoutARelease(repoRoot, arguments.packageName)
   echo "Commit ", TrackRelPath, " so CI releases on the same track."
 
 proc exitTrack(repoRoot: string, arguments: TrackArguments) =
   if arguments.trackName.len > 0:
     raise newException(IOError, "Usage: nimver track exit [--package <name>]")
+  if arguments.stable:
+    raise newException(
+      IOError,
+      "`--stable` says which version the next bump cuts, and `track exit` cuts none. Drop it, or run `nimver bump --stable` when you are ready for 1.0.0.",
+    )
 
   var selection = readTracks(repoRoot)
   if arguments.packageName.isSome:
     let package = checkedPackage(repoRoot, arguments.packageName.get)
     # Written as an empty override rather than removed: with a repo-wide
     # default standing, removing the line would put the package back on it.
-    selection.byPackage[package.name] = ""
+    selection.byPackage[package.name] = noTrack()
     writeTracks(repoRoot, selection)
     echo "Package '",
       package.name,
@@ -187,6 +222,11 @@ proc cmdTrack*(repoRoot: string, arguments: seq[string]) =
   let parsed = parseArguments(arguments)
   case parsed.subcommand
   of "":
+    if parsed.stable:
+      raise newException(
+        IOError,
+        "`--stable` belongs on `nimver track enter <name>`; `nimver track` only says which track you are on.",
+      )
     reportTracks(readTracks(repoRoot))
   of "enter":
     requireConfigured(repoRoot)

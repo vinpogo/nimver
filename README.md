@@ -61,6 +61,28 @@ nimver bump --dry-run # what it would do, and the changelog entry it would write
 
 `bump` looks back from `HEAD` to the last release of the package within the track it is releasing — the newest commit carrying that package's release tag. Every commit in between is a pending change, and its type decides the bump.
 
+## Below 1.0.0
+
+A package whose major version is `0` makes none of the promises semver makes for a released one: `^0.4.2` lets a consumer take `0.4.3` and no further. The minor is already the breaking axis down there, so nimver holds every bump a notch down until you say the project is ready:
+
+| the level the release takes | at 1.x | at 0.x |
+| --------------------------- | ------ | ------ |
+| `major`                     | major  | minor  |
+| `minor`                     | minor  | patch  |
+| `patch`                     | patch  | patch  |
+
+```sh
+nimver bump           # 0.4.2 -> 0.5.0 (minor, major held below 1.0.0)
+```
+
+Leaving `0.x` is a decision, not something a commit message does to you:
+
+```sh
+nimver bump --stable  # 0.4.2 -> 1.0.0, whatever the changes add up to
+```
+
+You can also use tracks to transition from `0.x` to `1.x`. See [The 1.0.0 cycle](#the-100-cycle) for more details.
+
 ## Supported project manifests
 
 `nimver bump` currently supports:
@@ -203,6 +225,18 @@ nimver track exit       # back to releases
 nimver bump             # v1.2.0
 ```
 
+### The 1.0.0 cycle
+
+A track is the natural way to approach a first stable release, so `track enter` takes `--stable` too:
+
+```sh
+nimver track enter rc --stable   # this cycle is the 1.0.0 cycle
+nimver bump                      # v1.0.0-rc.1
+nimver bump                      # v1.0.0-rc.2, breaking changes included
+nimver track exit
+nimver bump                      # v1.0.0
+```
+
 ### Tracks in a monorepo
 
 With `strategy = independent` each package can be on a track of its own:
@@ -223,9 +257,9 @@ refuses `--package`.
 ```
 nimver init
 nimver install-hooks [--force]
-nimver bump [<package>] [--dry-run]
+nimver bump [<package>] [--dry-run] [--stable]
 nimver track
-nimver track enter <name> [--package <name>]
+nimver track enter <name> [--package <name>] [--stable]
 nimver track exit [--package <name>]
 nimver version
 

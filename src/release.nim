@@ -32,9 +32,36 @@ type PackageRelease* = object
     ## Across `entries` alone, so it decides whether there is anything to cut.
     ## The two differ only on a track: at `1.2.0-alpha.1`, a lone `docs:` is
     ## `none` here while `level` stays `minor`, and nothing should go out.
+  cutLevel*: BumpLevel
+    ## The level actually applied to the base: `level` held a notch down while
+    ## the package is below 1.0.0. The two differ only there, and a progress
+    ## line saying `0.4.2 -> 0.5.0 (major)` would describe a bump that did not
+    ## happen.
+  cutsFirstStable*: bool
+    ## This release is the package's first stable one, or a prerelease of it,
+    ## so the version is exactly 1.0.0 whatever `level` adds up to.
   section*: string
   changelogPath*: string
   tag*: string
+
+type StableIntent* = enum
+  ## Why a release might cut 1.0.0 rather than bump. The two that are set differ
+  ## only in what happens once the package is stable already - which is the
+  ## whole question, since a promotion releases with nothing pending and a run
+  ## that quietly did nothing would be repeated forever.
+  siNone
+  siRequested ## `--stable` on this run. Refused once the package is stable.
+  siRecorded ## `track enter <name> --stable`. Spent once the package is stable.
+
+func stableIntent*(requested: bool, track: Track): StableIntent =
+  ## `--stable` on the run outranks the one recorded with the track, because it
+  ## is the one that has to speak up when there is nothing left to promote.
+  if requested:
+    siRequested
+  elif track.promotesToStable:
+    siRecorded
+  else:
+    siNone
 
 type ChangelogWrite* = object
   ## One changelog file and everything this run prepends to it. Packages that
@@ -56,7 +83,22 @@ func hasPendingChanges*(release: PackageRelease): bool =
   release.entries.len > 0
 
 func isReleasable*(release: PackageRelease): bool =
-  release.hasPendingChanges() and release.trackLevel != blNone
+  ## A promotion is releasable on its own: cutting 1.0.0 *is* the release, and
+  ## a section with no entries under it is what a ceremonial one should read
+  ## like.
+  release.cutsFirstStable or
+    (release.hasPendingChanges() and release.trackLevel != blNone)
+
+func bumpReason*(release: PackageRelease): string =
+  ## What moved the version, said so the line cannot be read as a lie. Below
+  ## 1.0.0 a breaking change is cut as a minor, and naming only the level the
+  ## commits added up to would describe a bump that did not happen.
+  if release.cutsFirstStable:
+    "stable"
+  elif release.cutLevel != release.level:
+    $release.cutLevel & ", " & $release.level & " held below 1.0.0"
+  else:
+    $release.cutLevel
 
 func releaseLabelFor*(projectWorkspace: Workspace, release: PackageRelease): string =
   if projectWorkspace.releasesPackagesApart(): release.name else: "version"
@@ -147,6 +189,38 @@ func noReleaseToBuildOn(
         tagName & "`), then bump again."
   newException(IOError, named & " no release tag in this branch's history, " & rest)
 
+func alreadyStable(naming: ReleaseNaming, current: SemVer): ref IOError =
+  ## `--stable` promotes a package to its first stable release, and one that has
+  ## had it has nothing left to promote. Refused rather than ignored: a
+  ## promotion releases with nothing pending, so a run that quietly did nothing
+  ## would be repeated forever.
+  let named =
+    if naming.packageName.len > 0:
+      "package '" & naming.packageName & "' is"
+    else:
+      "this repository is"
+  newException(
+    IOError,
+    named & " already at " & $current &
+      ", so there is nothing for `--stable` to promote. Drop it: from 1.0.0 on the commits decide the version.",
+  )
+
+func cutsFirstStable(intent: StableIntent, current, base: SemVer): bool =
+  ## Whether this release is the package's first stable one, or a prerelease of
+  ## it.
+  ##
+  ## Asked of the manifest and of the release behind it at once. Once
+  ## `1.0.0-rc.1` is written the promotion has happened, but until 1.0.0 is
+  ## *tagged* the base is still the 0.x before it - and bumping that base would
+  ## walk the version back down to 0.9.4 halfway through the cycle. So the cut
+  ## stays pinned to 1.0.0 for the whole of it: every further iteration of the
+  ## track, and the release that ends it. Once 1.0.0 is tagged the base is
+  ## stable too and this goes quiet by itself, which is why `--stable` need only
+  ## be said once.
+  if current.isStable():
+    return not base.isStable()
+  intent != siNone
+
 func baseVersionFor(sinceRelease: PendingChanges, manifestVersion: SemVer): SemVer =
   ## What to bump from.
   ##
@@ -173,6 +247,7 @@ proc planVersion(
     currentConfig: NimverConfig,
     track: Track,
     package: WorkspacePackage,
+    intent: StableIntent,
     release: var PackageRelease,
 ) =
   ## The two walks a version needs, and what each answers. Off a track they are
@@ -194,11 +269,28 @@ proc planVersion(
   if sinceRelease.boundaryVersion.isNone():
     raise noReleaseToBuildOn(naming, track, taggableVersion(@[package.manifest]))
   release.level = highestBumpLevel(sinceRelease.entries.claimedBy(package))
+
+  # Read before releasability for the same reason as the boundary above:
+  # `--stable` releases with nothing pending, and a package that is already
+  # stable has to be refused whether or not anything is waiting.
+  release.current = readVersion(package.manifest)
+  let base = baseVersionFor(sinceRelease, release.current)
+  if intent == siRequested and release.current.isStable():
+    raise alreadyStable(naming, release.current)
+  release.cutsFirstStable = cutsFirstStable(intent, release.current, base)
+  release.cutLevel =
+    if release.cutsFirstStable:
+      blMajor
+    else:
+      heldBelowStable(release.level, release.current)
   if not release.isReleasable():
     return
 
-  release.current = readVersion(package.manifest)
-  let core = bump(baseVersionFor(sinceRelease, release.current), release.level)
+  let core =
+    if release.cutsFirstStable:
+      FirstStableVersion
+    else:
+      bump(base, release.cutLevel)
   release.next =
     if track.hasTrack:
       core.onTrack(track.name, nextIteration(repoRoot, naming, core))
@@ -211,6 +303,7 @@ proc planRelease*(
     currentConfig: NimverConfig,
     package: WorkspacePackage,
     track = noTrack(),
+    promoteToStable = false,
 ): PackageRelease =
   ## Every package reads its own stretch of history, ending at its own last
   ## release. A change touching two packages is therefore counted once for
@@ -220,7 +313,15 @@ proc planRelease*(
   result.manifests = @[package.manifest]
   let naming =
     newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart(), track)
-  planVersion(repoRoot, naming, currentConfig, track, package, result)
+  planVersion(
+    repoRoot,
+    naming,
+    currentConfig,
+    track,
+    package,
+    stableIntent(promoteToStable, track),
+    result,
+  )
   if not result.isReleasable():
     return
 
@@ -262,6 +363,7 @@ proc planFixedRelease*(
     projectWorkspace: Workspace,
     currentConfig: NimverConfig,
     track = noTrack(),
+    promoteToStable = false,
 ): PackageRelease =
   ## The whole repository moving at once: one version across every manifest, one
   ## changelog section at the repository root, one tag - and therefore one
@@ -281,11 +383,26 @@ proc planFixedRelease*(
   if sinceRelease.boundaryVersion.isNone():
     raise noReleaseToBuildOn(naming, track, taggableVersion(result.manifests))
   result.level = highestBumpLevel(sinceRelease.entries)
+
+  let intent = stableIntent(promoteToStable, track)
+  result.current = sharedCurrentVersion(projectWorkspace.packages)
+  let base = baseVersionFor(sinceRelease, result.current)
+  if intent == siRequested and result.current.isStable():
+    raise alreadyStable(naming, result.current)
+  result.cutsFirstStable = cutsFirstStable(intent, result.current, base)
+  result.cutLevel =
+    if result.cutsFirstStable:
+      blMajor
+    else:
+      heldBelowStable(result.level, result.current)
   if not result.isReleasable():
     return
 
-  result.current = sharedCurrentVersion(projectWorkspace.packages)
-  let core = bump(baseVersionFor(sinceRelease, result.current), result.level)
+  let core =
+    if result.cutsFirstStable:
+      FirstStableVersion
+    else:
+      bump(base, result.cutLevel)
   result.next =
     if track.hasTrack:
       core.onTrack(track.name, nextIteration(repoRoot, naming, core))

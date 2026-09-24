@@ -15,6 +15,7 @@ proc plannedReleases(
     currentConfig: NimverConfig,
     requestedPackageName: Option[string],
     tracks: TrackSelection,
+    promoteToStable: bool,
 ): seq[PackageRelease] =
   ## Every release the strategy would consider, releasable or not, so that
   ## having nothing to bump can still be reported in the caller's terms.
@@ -28,7 +29,7 @@ proc plannedReleases(
     # One version across every manifest, so one track: the repository-wide one.
     @[
       planFixedRelease(
-        repoRoot, projectWorkspace, currentConfig, Track(name: tracks.default)
+        repoRoot, projectWorkspace, currentConfig, tracks.default, promoteToStable
       )
     ]
   of wsIndependent:
@@ -41,7 +42,12 @@ proc plannedReleases(
         projectWorkspace.packages
     candidates.mapIt(
       planRelease(
-        repoRoot, projectWorkspace, currentConfig, it, tracks.trackFor(it.name)
+        repoRoot,
+        projectWorkspace,
+        currentConfig,
+        it,
+        tracks.trackFor(it.name),
+        promoteToStable,
       )
     )
 
@@ -64,7 +70,7 @@ proc reportPlanned(projectWorkspace: Workspace, releases: seq[PackageRelease]) =
       " -> ",
       $release.next,
       " (",
-      $release.level,
+      release.bumpReason(),
       ")"
 
 proc reportDryRun(releases: seq[PackageRelease]) =
@@ -85,24 +91,31 @@ proc warnAboutTracks(tracks: TrackSelection, projectWorkspace: Workspace) =
   if not tracks.anyTrack():
     return
 
-  proc advice(trackName: string): string =
-    " These are prereleases: the tag and the manifest version both carry `-" & trackName &
-      ".<n>`. Run `nimver track exit` to come off the track."
+  proc advice(track: Track): string =
+    result =
+      " These are prereleases: the tag and the manifest version both carry `-" &
+      track.name & ".<n>`."
+    if track.promotesToStable:
+      result.add(
+        " The track was entered with `--stable`, so the first version it cuts below 1.0.0 is 1.0.0 itself."
+      )
+    result.add(" Run `nimver track exit` to come off the track.")
 
   let onDefault =
-    projectWorkspace.packages.allIt(tracks.trackFor(it.name).name == tracks.default)
-  if onDefault and tracks.default.len > 0:
+    projectWorkspace.packages.allIt(tracks.trackFor(it.name) == tracks.default)
+  if onDefault and tracks.default.hasTrack():
     writeError(
-      "nimver: releasing on track '" & tracks.default & "'." & advice(tracks.default)
+      "nimver: releasing on track '" & tracks.default.name & "'." &
+        advice(tracks.default)
     )
     return
 
   for package in projectWorkspace.packages:
-    let trackName = tracks.trackFor(package.name).name
-    if trackName.len > 0:
+    let track = tracks.trackFor(package.name)
+    if track.hasTrack():
       writeError(
-        "nimver: releasing " & package.name & " on track '" & trackName & "'." &
-          advice(trackName)
+        "nimver: releasing " & package.name & " on track '" & track.name & "'." &
+          advice(track)
       )
 
 proc checkTagsAreFree(repoRoot: string, releases: seq[PackageRelease]) =
@@ -141,13 +154,19 @@ proc applyReleases(
     gitTag(repoRoot, release.tag)
     echo "Created tag " & release.tag
 
-proc cmdBump*(repoRoot: string, requestedPackageName: Option[string], dryRun: bool) =
+proc cmdBump*(
+    repoRoot: string,
+    requestedPackageName: Option[string],
+    dryRun: bool,
+    promoteToStable: bool,
+) =
   let config = loadUserConfig(repoRoot)
   let tracks = readTracks(repoRoot)
   let projectWorkspace = loadWorkspace(repoRoot, config)
   warnAboutTracks(tracks, projectWorkspace)
-  let planned =
-    plannedReleases(repoRoot, projectWorkspace, config, requestedPackageName, tracks)
+  let planned = plannedReleases(
+    repoRoot, projectWorkspace, config, requestedPackageName, tracks, promoteToStable
+  )
 
   # One order for everything a run emits - changelog sections, progress lines,
   # tags, the commit subject - so releasing the same set of packages reads the

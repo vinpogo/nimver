@@ -10,7 +10,7 @@ suite "manifest adapters":
     let manifestPath = dir / "pkg.nimble"
     writeFile(
       manifestPath,
-      "name = \"pkg\"\nversion       = '0.1.0' # release version\nauthor = \"Test\"\n",
+      "name = \"pkg\"\nversion       = '1.0.0' # release version\nauthor = \"Test\"\n",
     )
     discard run("git add pkg.nimble", dir)
     discard run("git commit -q --no-verify -m \"chore: format manifest\"", dir)
@@ -18,9 +18,9 @@ suite "manifest adapters":
 
     let (output, code) = run("nimver bump", dir)
     check code == 0
-    check "0.1.0 -> 0.1.1" in output
+    check "1.0.0 -> 1.0.1" in output
     check readFile(manifestPath) ==
-      "name = \"pkg\"\nversion       = '0.1.1' # release version\nauthor = \"Test\"\n"
+      "name = \"pkg\"\nversion       = '1.0.1' # release version\nauthor = \"Test\"\n"
 
   test "bump updates a package.json manifest":
     let dir = freshPackageRepo("bump-package-json")
@@ -30,21 +30,21 @@ suite "manifest adapters":
     let (output, code) = run("nimver bump", dir)
 
     check code == 0
-    check "0.1.0 -> 0.2.0" in output
+    check "1.0.0 -> 1.1.0" in output
     check "(package.json)" in output
     let package = parseJson(readFile(dir / "package.json"))
-    check package["version"].getStr() == "0.2.0"
+    check package["version"].getStr() == "1.1.0"
     check package["name"].getStr() == "pkg"
     check package["private"].getBool()
     check readFile(dir / "package.json") ==
-      before.replace("\"version\": \"0.1.0\"", "\"version\": \"0.2.0\"")
+      before.replace("\"version\": \"1.0.0\"", "\"version\": \"1.1.0\"")
     check readFile(dir / "pnpm-lock.yaml") == "lockfileVersion: '9.0'\n"
 
     let (changedFiles, _) = run("git show --pretty=format: --name-only HEAD", dir)
     check "package.json" in changedFiles
     check "pnpm-lock.yaml" notin changedFiles
     let (tags, _) = run("git tag", dir)
-    check "v0.2.0" in tags
+    check "v1.1.0" in tags
 
   test "bump detects package.json without a package-manager marker":
     let dir = freshPackageRepo("bump-package-json-no-marker")
@@ -58,14 +58,14 @@ suite "manifest adapters":
 
     let (output, code) = run("nimver bump", dir)
     check code == 0
-    check "0.1.0 -> 0.1.1" in output
-    check "\"version\": \"0.1.1\"" in readFile(packagePath)
+    check "1.0.0 -> 1.0.1" in output
+    check "\"version\": \"1.0.1\"" in readFile(packagePath)
 
   test "sibling manifests are versioned together, with a warning":
     # Nothing in the config says how two root manifests relate, so nimver
     # assumes they are one release unit rather than picking one silently.
     let dir = freshPackageRepo("sibling-manifests")
-    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.0.0\"\n")
     discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
 
     let (output, code) = run("nimver bump", dir)
@@ -75,16 +75,16 @@ suite "manifest adapters":
     check "package.json" in output
 
     # Both manifests move to the same next version.
-    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
-    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    check "\"version\": \"1.0.1\"" in readFile(dir / "package.json")
+    check "version = \"1.0.1\"" in readFile(dir / "pkg.nimble")
     let (subject, _) = run("git log -1 --pretty=%s", dir)
-    check subject.strip() == "version: v0.1.1"
+    check subject.strip() == "version: v1.0.1"
 
   test "a config naming the fixed strategy is not advised to name it":
     # The advice is about a choice nimver made on its own. Once the config says
     # `fixed`, siblings still release together - but nothing was assumed.
     let dir = freshPackageRepo("sibling-manifests-strategy-fixed")
-    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.0.0\"\n")
     let configPath = dir / ".nimver" / "config.ini"
     writeFile(configPath, readFile(configPath) & "\n[workspace]\nstrategy = fixed\n")
     discard run("git add -A", dir)
@@ -95,17 +95,17 @@ suite "manifest adapters":
     check code == 0
     check "assuming strategy = fixed" notin output
 
-    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
-    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    check "\"version\": \"1.0.1\"" in readFile(dir / "package.json")
+    check "version = \"1.0.1\"" in readFile(dir / "pkg.nimble")
     let (subject, _) = run("git log -1 --pretty=%s", dir)
-    check subject.strip() == "version: v0.1.1"
+    check subject.strip() == "version: v1.0.1"
 
   test "declaring one manifest leaves its sibling alone, without renaming releases":
     # Declaring a package is how you exclude an unrelated manifest - here a
-    # package.json that is only tooling. Doing so must not turn `v0.1.1` into
-    # `root-v0.1.1`: there is still only one package.
+    # package.json that is only tooling. Doing so must not turn `v1.0.1` into
+    # `root-v1.0.1`: there is still only one package.
     let dir = freshPackageRepo("declared-single-package")
-    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.0.0\"\n")
     let configPath = dir / ".nimver" / "config.ini"
     writeFile(
       configPath, readFile(configPath) & "\n[package.root]\nmanifest = pkg.nimble\n"
@@ -115,22 +115,22 @@ suite "manifest adapters":
     let (output, code) = run("nimver bump", dir)
     check code == 0
     check "assuming strategy = fixed" notin output
-    check "0.1.0 -> 0.1.1" in output
+    check "1.0.0 -> 1.0.1" in output
 
-    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    check "version = \"1.0.1\"" in readFile(dir / "pkg.nimble")
     # The undeclared manifest is not versioned at all.
-    check "\"version\": \"0.1.0\"" in readFile(dir / "package.json")
+    check "\"version\": \"1.0.0\"" in readFile(dir / "package.json")
 
     let (subject, _) = run("git log -1 --pretty=%s", dir)
-    check subject.strip() == "version: v0.1.1"
-    check tags(dir) == @["v0.1.0", "v0.1.1"]
+    check subject.strip() == "version: v1.0.1"
+    check tags(dir) == @["v1.0.0", "v1.0.1"]
 
   test "sibling manifests are released separately when the strategy is independent":
     # An explicit strategy is honoured rather than overridden, but detected
     # packages are named after their manifest paths - which is what the warning
     # nudges you to fix by declaring them.
     let dir = freshPackageRepo("sibling-manifests-independent")
-    writeFile(dir / "pkg.nimble", "version = \"0.1.0\"\n")
+    writeFile(dir / "pkg.nimble", "version = \"1.0.0\"\n")
     let configPath = dir / ".nimver" / "config.ini"
     writeFile(
       configPath, readFile(configPath) & "\n[workspace]\nstrategy = independent\n"
@@ -144,11 +144,11 @@ suite "manifest adapters":
 
     # Each moves on its own, and both are named in the changelog they share,
     # since a bare version could not say which manifest it belongs to.
-    check "\"version\": \"0.1.1\"" in readFile(dir / "package.json")
-    check "version = \"0.1.1\"" in readFile(dir / "pkg.nimble")
+    check "\"version\": \"1.0.1\"" in readFile(dir / "package.json")
+    check "version = \"1.0.1\"" in readFile(dir / "pkg.nimble")
     let changelog = readFile(dir / "CHANGELOG.md")
-    check "## [package.json 0.1.1]" in changelog
-    check "## [pkg.nimble 0.1.1]" in changelog
+    check "## [package.json 1.0.1]" in changelog
+    check "## [pkg.nimble 1.0.1]" in changelog
     check changelog.find("## [package.json") < changelog.find("## [pkg.nimble")
 
   test "a prerelease version is written into a Nimble manifest, formatting intact":
@@ -157,7 +157,7 @@ suite "manifest adapters":
     let dir = freshRepo("prerelease-nimble")
     writeFile(
       dir / "pkg.nimble",
-      "name = \"pkg\"\nversion       = '0.1.0' # release version\nauthor = \"Test\"\n",
+      "name = \"pkg\"\nversion       = '1.0.0' # release version\nauthor = \"Test\"\n",
     )
     discard run("git add pkg.nimble", dir)
     discard run("git commit -q --no-verify -m \"chore: format manifest\"", dir)
@@ -166,7 +166,7 @@ suite "manifest adapters":
 
     check run("nimver bump", dir).code == 0
     let manifest = readFile(dir / "pkg.nimble")
-    check "version       = '0.1.1-alpha.1' # release version" in manifest
+    check "version       = '1.0.1-alpha.1' # release version" in manifest
     check "name = \"pkg\"" in manifest
 
   test "a prerelease version is written into package.json":
@@ -176,12 +176,12 @@ suite "manifest adapters":
 
     check run("nimver bump", dir).code == 0
     let manifest = parseJson(readFile(dir / "package.json"))
-    check manifest["version"].getStr() == "0.2.0-rc.1"
+    check manifest["version"].getStr() == "1.1.0-rc.1"
     check manifest["private"].getBool() # the rest of the file is left alone
 
   test "a prerelease in the manifest is bumped from the release behind it":
-    # Not from its own core: 0.2.0-rc.1 already is the result of bumping 0.1.0,
-    # so paying for the same minor twice would give 0.3.0.
+    # Not from its own core: 1.1.0-rc.1 already is the result of bumping 1.0.0,
+    # so paying for the same minor twice would give 1.2.0.
     let dir = freshPackageRepo("prerelease-base")
     check run("nimver track enter rc", dir).code == 0
     discard commitFile(dir, "a.txt", "hi", "feat: a feature")
@@ -189,4 +189,4 @@ suite "manifest adapters":
     discard commitFile(dir, "b.txt", "hi", "fix: a fix")
     check run("nimver bump", dir).code == 0
 
-    check parseJson(readFile(dir / "package.json"))["version"].getStr() == "0.2.0-rc.2"
+    check parseJson(readFile(dir / "package.json"))["version"].getStr() == "1.1.0-rc.2"

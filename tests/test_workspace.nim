@@ -16,7 +16,7 @@ suite "workspace attribution":
     check code == 0
 
     let dryRun = pending(dir)
-    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.1.0 (minor)" in dryRun
     check "Bumping cli" notin dryRun
 
   test "workspace shared changes affect every package":
@@ -25,8 +25,8 @@ suite "workspace attribution":
     check code == 0
 
     let dryRun = pending(dir)
-    check "Bumping web: 0.1.0 -> 0.1.1 (patch)" in dryRun
-    check "Bumping cli: 0.1.0 -> 0.1.1 (patch)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.0.1 (patch)" in dryRun
+    check "Bumping cli: 1.0.0 -> 1.0.1 (patch)" in dryRun
 
   test "workspace can ignore shared changes":
     let dir = freshWorkspaceRepo(
@@ -58,7 +58,7 @@ suite "workspace attribution":
     check code == 0
 
     let dryRun = pending(dir)
-    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.1.0 (minor)" in dryRun
     check "Bumping cli" notin dryRun
 
   test "an unquoted glob in sourceFiles is rejected":
@@ -92,12 +92,12 @@ suite "workspace attribution":
     check commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web").code ==
       0
     var dryRun = pending(dir)
-    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.1.0 (minor)" in dryRun
     check "Bumping root" notin dryRun
 
     # Outside every nested package, so the root package is the nearest.
     createDir(dir / "src")
     check commitFile(dir, "src/main.nim", "echo 1\n", "fix: patch root").code == 0
     dryRun = pending(dir)
-    check "Bumping root: 0.1.0 -> 0.1.1 (patch)" in dryRun
-    check "Bumping web: 0.1.0 -> 0.2.0 (minor)" in dryRun
+    check "Bumping root: 1.0.0 -> 1.0.1 (patch)" in dryRun
+    check "Bumping web: 1.0.0 -> 1.1.0 (minor)" in dryRun

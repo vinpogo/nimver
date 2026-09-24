@@ -43,6 +43,35 @@ func onTrack*(v: SemVer, track: string, iteration: int): SemVer =
     major: v.major, minor: v.minor, patch: v.patch, track: track, iteration: iteration
   )
 
+const FirstStableVersion* = SemVer(major: 1, minor: 0, patch: 0)
+  ## What a promotion cuts, exactly. Bumping any 0.x by a major lands here
+  ## anyway; naming it keeps the promotion honest when the base has been
+  ## hand-edited out from under it.
+
+func isStable*(v: SemVer): bool =
+  ## Whether the version makes the promises semver makes for a released
+  ## package. Below 1.0.0 there are none: `^0.4.2` lets a consumer take 0.4.3
+  ## and no further, so 0.4 to 0.5 is already the break that 1.x spells as a
+  ## major.
+  ##
+  ## Read off the core, so `1.0.0-rc.1` is already stable. That is what makes a
+  ## promotion stick across the iterations of a track.
+  v.major > 0
+
+func heldBelowStable*(level: BumpLevel, current: SemVer): BumpLevel =
+  ## The level a bump is actually cut at. Below 1.0.0 every one is held a notch
+  ## down - a major takes the minor, a minor the patch - which is what `^0.x`
+  ## already means to npm and to cargo. On the level rather than on the commit
+  ## type, so it follows whatever the types are configured to mean. Patch is the
+  ## floor: held any lower, a release with changes in it would have nothing left
+  ## to cut.
+  if current.isStable():
+    return level
+  case level
+  of blMajor: blMinor
+  of blMinor: blPatch
+  else: level
+
 func parseTrackSuffix(suffix: string): tuple[track: string, iteration: int] =
   ## `alpha.9` as we write it, or nothing recognisable. Anything else - a
   ## hand-written `SNAPSHOT`, an `rc1` without an iteration - is left to the

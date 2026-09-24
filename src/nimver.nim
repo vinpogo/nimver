@@ -15,9 +15,9 @@ nimver - semantic versioning from Conventional Commits
 Usage:
   nimver init
   nimver install-hooks [--force]
-  nimver bump [<package>] [--dry-run]
+  nimver bump [<package>] [--dry-run] [--stable]
   nimver track
-  nimver track enter <name> [--package <name>]
+  nimver track enter <name> [--package <name>] [--stable]
   nimver track exit [--package <name>]
   nimver version
 
@@ -64,7 +64,14 @@ when isMainModule:
         writeError(checkResult.error)
         quit(1)
     of "bump":
-      let nonFlagArgs = params.filterIt(not it.startsWith("--"))
+      # A flag nobody recognises is refused rather than ignored: a typo'd
+      # `--stabel` would otherwise tag the version the commits happened to add
+      # up to, and say nothing about having been misread.
+      for param in params:
+        if param.startsWith("-") and param notin ["--dry-run", "--stable"]:
+          writeError("nimver: unknown option '" & param & "' for `nimver bump`")
+          quit(1)
+      let nonFlagArgs = params.filterIt(not it.startsWith("-"))
       if nonFlagArgs.len > 1:
         writeError("nimver: `bump` takes at most one package name")
         quit(1)
@@ -73,7 +80,9 @@ when isMainModule:
           some(nonFlagArgs[0])
         else:
           none(string)
-      cmdBump(repoRoot, requestedPackageName, "--dry-run" in params)
+      cmdBump(
+        repoRoot, requestedPackageName, "--dry-run" in params, "--stable" in params
+      )
     of "track":
       cmdTrack(repoRoot, params)
     else:

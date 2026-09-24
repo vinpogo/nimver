@@ -14,9 +14,12 @@ What *is* breaking:
 - a repository layout the released version accepted now errors out
 - a released config value, CLI flag, or command changes meaning or disappears
 - release output a user depends on changes shape (tag names, commit subjects)
+- the version a given history produces changes
 
 Mark those with `!` and a `BREAKING CHANGE:` footer explaining the migration.
-A breaking marker forces `major` regardless of the type's configured bump.
+A breaking marker forces `major` regardless of the type's configured bump - and
+below 1.0.0 that `major` is cut as a minor (see README, "Below 1.0.0"). nimver
+itself is past 1.0.0, so its own releases are unaffected by that holding.
 
 ## Everyday conventions
 
