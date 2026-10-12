@@ -3,11 +3,18 @@
   "version": "5.1.1",
   "description": "A package to manage semantic versioning from commit messages",
   "keywords": [
+    "semantic-versioning",
     "semver",
     "conventional-commits",
     "changelog",
+    "changelog-generator",
     "release",
-    "versioning"
+    "git-hooks",
+    "cli",
+    "versioning",
+    "version-bump",
+    "developer-tools",
+    "git"
   ],
   "homepage": "https://github.com/vinpogo/nimver",
   "bugs": "https://github.com/vinpogo/nimver/issues",
