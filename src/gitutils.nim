@@ -3,6 +3,7 @@ import ./sysio
 
 type CommitRecord* = object
   hash*: string
+  parentHash*: string ## Empty for a root commit; merges are never read.
   message*: string
   changedPaths*: seq[string]
 
@@ -46,19 +47,21 @@ proc gitCommitsIn*(repoRoot: string, revisionRange: string): seq[CommitRecord] =
       "log",
       "--no-merges",
       "--name-only",
-      "--format=" & RecordSeparator & "%H" & FieldSeparator & "%B" & FieldSeparator,
+      "--format=" & RecordSeparator & "%H" & FieldSeparator & "%P" & FieldSeparator &
+        "%B" & FieldSeparator,
       revisionRange,
     ]
   )
     .split(RecordSeparator)
     .filterIt(it.strip().len > 0)
     .mapIt(it.split(FieldSeparator))
-    .filterIt(it.len >= 3)
+    .filterIt(it.len >= 4)
     .mapIt(
       CommitRecord(
         hash: it[0].strip(),
-        message: it[1].strip(),
-        changedPaths: it[2].splitLines().mapIt(it.strip()).filterIt(it.len > 0),
+        parentHash: it[1].strip(),
+        message: it[2].strip(),
+        changedPaths: it[3].splitLines().mapIt(it.strip()).filterIt(it.len > 0),
       )
     )
 
@@ -96,6 +99,13 @@ proc gitFileAtRevision*(repoRoot, revision, path: string): Option[string] =
 
 proc gitRootEntryNames*(repoRoot, revision: string): seq[string] =
   runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision & ":"])
+    .splitLines()
+    .filterIt(it.strip().len > 0)
+    .mapIt(it.strip())
+
+proc gitPathsAtRevision*(repoRoot, revision: string, paths: seq[string]): seq[string] =
+  ## Those of `paths` that exist in the revision's tree.
+  runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision, "--"] & paths)
     .splitLines()
     .filterIt(it.strip().len > 0)
     .mapIt(it.strip())

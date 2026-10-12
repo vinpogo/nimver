@@ -1,4 +1,4 @@
-import std/[algorithm, options, strutils, tables]
+import std/[algorithm, options, sequtils, strutils, tables]
 import ./changes
 import ./commitparser
 import ./config
@@ -40,6 +40,10 @@ type
     ## which packages a changed file can belong to.
     config: NimverConfig
     workspace: Workspace
+    foreign: bool
+      ## The commit's tree holds none of the project's manifests: it came in
+      ## through a merge from another repository's history, a `git subtree`
+      ## mirror's say, and is none of the project's changes.
 
 proc newSnapshot*(config: NimverConfig, workspace: Workspace): Snapshot =
   Snapshot(config: config, workspace: workspace)
@@ -152,19 +156,28 @@ proc snapshotAt(repoRoot, revision: string, currentConfig: NimverConfig): Snapsh
     detectedManifestNames = rootManifestNames(gitRootEntryNames(repoRoot, revision))
   result.workspace =
     workspaceLayout(repoRoot, result.config, detectedManifestNames, quiet = true)
+  result.foreign =
+    if result.config.packages.len == 0:
+      detectedManifestNames.len == 0
+    else:
+      gitPathsAtRevision(
+        repoRoot, revision, result.workspace.packages.mapIt(it.manifestRelativePath)
+      ).len == 0
 
 proc changesTheSetup(snapshot: Snapshot, record: CommitRecord): bool =
   ## Whether a commit is one the snapshot has to be re-read after. Reading it
   ## per commit would mean a couple of `git` calls each, which is most of the
-  ## time a release spends; both of these change rarely, and a commit that
-  ## changes neither cannot have changed how the one before it is read.
+  ## time a release spends; the config and the manifests change rarely, and a
+  ## commit that changes none of them cannot have changed how its parent is
+  ## read.
   for path in record.changedPaths:
     if path == ConfigRelPath:
       return true
-    # Only when nothing is configured does the root listing decide anything,
-    # and only a root entry can be part of it.
-    if snapshot.config.packages.len == 0 and '/' notin path and
-        rootManifestNames(@[path]).len > 0:
+    if snapshot.config.packages.len == 0:
+      # Only a root entry can be part of the root listing.
+      if '/' notin path and rootManifestNames(@[path]).len > 0:
+        return true
+    elif snapshot.workspace.packages.anyIt(it.manifestRelativePath == path):
       return true
   false
 
@@ -262,16 +275,18 @@ proc pendingChanges*(
 
   var newestFirst: seq[ChangeEntry] = @[]
   var snapshot: Snapshot
-  # Walking backwards, the setup only needs re-reading once a commit that
-  # changed it has been passed.
-  var snapshotIsStale = true
+  # A snapshot carries over only to the parent of the commit it was read at,
+  # and only when that commit left the setup alone. The walk goes by date, so
+  # after a merge the next commit may be on another line of history entirely.
+  var snapshotHoldsFor = ""
   for record in versionRange.records:
-    if snapshotIsStale:
+    if record.hash != snapshotHoldsFor:
       snapshot = snapshotAt(repoRoot, record.hash, currentConfig)
-    let change = snapshot.changeFor(record)
-    if change.isSome():
-      newestFirst.add(change.get())
-    snapshotIsStale = snapshot.changesTheSetup(record)
+    if not snapshot.foreign:
+      let change = snapshot.changeFor(record)
+      if change.isSome():
+        newestFirst.add(change.get())
+    snapshotHoldsFor = if snapshot.changesTheSetup(record): "" else: record.parentHash
 
   result.entries = newestFirst.reversed()
 

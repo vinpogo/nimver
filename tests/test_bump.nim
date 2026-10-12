@@ -297,3 +297,24 @@ suite "promoting to the first stable release":
     check refused.code != 0
     check "unknown option '--stabel'" in refused.output
     check tags(dir) == @["v0.4.2"]
+
+suite "history merged in from elsewhere":
+  test "a release after a subtree pull counts each change once":
+    let dir = subtreeMirroredRepo("bump-subtree-pull")
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "1.0.0 -> 1.1.0" in output
+    check "v1.1.0" in tags(dir)
+
+    let changelog = readFile(dir / "CHANGELOG.md")
+    check changelog.count("add b together with docs") == 1
+    check "initial" notin changelog
+
+  test "a working tree with no manifest is still refused":
+    let dir = freshRepo("bump-no-manifest")
+    check commitFile(dir, "a.txt", "hi", "feat: a").code == 0
+    removeFile(dir / "pkg.nimble")
+
+    let (output, code) = run("nimver bump", dir)
+    check code != 0
+    check "No supported project manifest found" in output

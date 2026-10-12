@@ -109,18 +109,14 @@ proc workspaceLayout*(
   ##
   ## Manifests are not required to exist: one that a past commit had may be
   ## long gone. Only a package actually being released is read from disk.
+  ## Nothing configured and nothing detected lays out no packages at all,
+  ## which is what a commit merged in from another repository looks like.
   ## `quiet` silences the advice about detected siblings, which is worth saying
   ## once about the working tree and never about each commit behind it.
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
 
   if config.packages.len == 0:
-    if detectedManifestNames.len == 0:
-      raise newException(
-        IOError,
-        "No supported project manifest found. Expected a .nimble file or package.json.",
-      )
-
     for manifestName in detectedManifestNames:
       # Derive a stable package name so history attribution survives a
       # transition from single-package to multi-package. A nimble file
@@ -179,6 +175,11 @@ proc loadWorkspace*(repoRoot: string, config: NimverConfig): Workspace =
   for detectedManifest in findRootManifests(repoRoot):
     detectedManifestNames.add(
       normalizeRepoPath(relativePath(detectedManifest.filePath, repoRoot))
+    )
+  if config.packages.len == 0 and detectedManifestNames.len == 0:
+    raise newException(
+      IOError,
+      "No supported project manifest found. Expected a .nimble file or package.json.",
     )
 
   result = workspaceLayout(repoRoot, config, detectedManifestNames)

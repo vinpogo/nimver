@@ -272,6 +272,72 @@ proc commitFile*(
   discard run("git add -A", dir)
   run("git commit -q -m \"" & message & "\"", dir)
 
+proc mustRun(cmd, dir: string) =
+  let commandResult = run(cmd, dir)
+  doAssert commandResult.code == 0, cmd & " failed: " & commandResult.output
+
+proc subtreeMirroredRepo*(name: string): string =
+  ## `app`, whose `docs/` is mirrored to a repository of its own with `git
+  ## subtree`, right after a `git subtree pull` - so a commit from the docs
+  ## repository is the newest non-merge commit, and the history holds the
+  ## subtree's copies of `feat: initial` and `feat: add b together with docs`.
+  ## Released as v1.0.0 at `feat: initial`.
+  ##
+  ## The sleeps keep commit dates apart, which is what the walk orders by.
+  let base = TestRepoRoot / name
+  resetDir(base)
+  result = base / "app"
+  createDir(result / "docs")
+  let docsRemote = base / "docs.git"
+  let docsClone = base / "docs"
+  mustRun("git init -q --bare -b main " & docsRemote, base)
+
+  initGitRepo(result)
+  writeFile(result / "app.nimble", "version = \"1.0.0\"\n")
+  writeFile(result / "docs" / "a.md", "a\n")
+  initNimver(result)
+  commitAll(result, "feat: initial")
+  tagBaseline(result, "1.0.0")
+  mustRun(
+    "git subtree split -q --prefix=docs --rejoin -m \"chore: rejoin docs\" -b split",
+    result,
+  )
+  mustRun("git push -q " & docsRemote & " split:main", result)
+
+  sleep(1100)
+  writeFile(result / "docs" / "b.md", "b\n")
+  commitAll(result, "feat: add b together with docs")
+  mustRun("git subtree push -q --prefix=docs " & docsRemote & " main", result)
+
+  mustRun("git clone -q " & docsRemote & " " & docsClone, base)
+  initGitRepo(docsClone)
+  sleep(1100)
+  writeFile(docsClone / "c.md", "c\n")
+  commitAll(docsClone, "external edit")
+  mustRun("git push -q", docsClone)
+
+  mustRun(
+    "git subtree pull -q --prefix=docs " & docsRemote & " main -m \"docs: pull docs\"",
+    result,
+  )
+
+proc foreignHistory*(name, fileName, message: string): string =
+  ## A repository sharing no history with the project: one commit, adding
+  ## `fileName` at its root, and no manifest.
+  result = TestRepoRoot / name
+  resetDir(result)
+  createDir(result)
+  initGitRepo(result)
+  writeFile(result / fileName, "foreign\n")
+  commitAll(result, message)
+
+proc mergeUnrelated*(dir, otherRepo: string) =
+  mustRun("git fetch -q " & otherRepo & " HEAD", dir)
+  mustRun(
+    "git merge -q --no-ff --allow-unrelated-histories -m \"chore: merge it in\" FETCH_HEAD",
+    dir,
+  )
+
 proc freshReleasedRepo*(name: string, version = "1.0.0"): string =
   ## `freshRepo` with one release on top of the baseline, so the repository
   ## carries both tags. Nearly every track test needs one: a prerelease is

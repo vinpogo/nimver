@@ -395,3 +395,78 @@ suite "which tags bound a range":
     let dryRun = pending(dir)
     check "fix: in front of them" in dryRun
     check "behind the tags" notin dryRun
+
+suite "history merged in from elsewhere":
+  ## A commit is the project's only when its own tree holds one of the project's
+  ## manifests. What a merge brings in from another repository - a `git subtree`
+  ## mirror's commits, and its copies of ours - is none of the project's changes.
+
+  test "a subtree pull leaving a foreign commit newest does not stop a release":
+    let dir = subtreeMirroredRepo("history-subtree-pull")
+    let dryRun = pending(dir)
+    check "No supported project manifest" notin dryRun
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
+    check dryRun.count("- feat: add b together with docs") == 1
+    check "feat: initial" notin dryRun
+
+  test "a subtree's copies of our commits are not counted again":
+    let dir = subtreeMirroredRepo("history-subtree-copies")
+    sleep(1100)
+    check commitFile(dir, "x.nim", "x\n", "fix: x").code == 0
+
+    let dryRun = pending(dir)
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
+    check dryRun.count("- feat: add b together with docs") == 1
+    check dryRun.count("- fix: x") == 1
+    check "feat: initial" notin dryRun
+
+  test "a merged-in history with no manifest at its root is skipped":
+    let dir = freshRepo("history-foreign-root")
+    check commitFile(dir, "a.txt", "hi", "chore: set up nimver").code == 0
+    mergeUnrelated(
+      dir, foreignHistory("history-foreign-root-other", "README.md", "feat: foreign")
+    )
+
+    let dryRun = pending(dir)
+    check "No supported project manifest" notin dryRun
+    check "Nothing to bump" in dryRun
+    check "foreign" notin dryRun
+    check run("nimver track enter alpha", dir).code == 0
+
+  test "declared packages are held to the same rule":
+    # Under `sharedChanges = all` a file no package claims is everyone's, so
+    # without the rule the foreign commit would be released by every package.
+    let dir = freshWorkspaceRepo("history-foreign-workspace", sharedChanges = "all")
+    check commitFile(dir, "packages/web/index.js", "export {}\n", "fix: web").code == 0
+    mergeUnrelated(
+      dir,
+      foreignHistory("history-foreign-workspace-other", "index.js", "feat: foreign"),
+    )
+
+    let dryRun = pending(dir)
+    check "1.0.0 -> 1.0.1 (patch)" in dryRun
+    check "- fix: web" in dryRun
+    check "foreign" notin dryRun
+
+  test "a branch merged with a merge commit is counted in full":
+    # Its commits sit on a line of history of their own, interleaved by date
+    # with the ones on main - and every one of them is the project's.
+    let dir = freshRepo("history-merged-branch")
+    check commitFile(dir, "setup.txt", "hi", "chore: set up nimver").code == 0
+    let mainBranch = run("git branch --show-current", dir).output.strip()
+    check run("git checkout -q -b feature", dir).code == 0
+    check commitFile(dir, "a.txt", "hi", "feat: on branch").code == 0
+    sleep(1100)
+    check run("git checkout -q " & mainBranch, dir).code == 0
+    check commitFile(dir, "b.txt", "hi", "fix: on main").code == 0
+    sleep(1100)
+    check run("git checkout -q feature", dir).code == 0
+    check commitFile(dir, "c.txt", "hi", "fix: also on branch").code == 0
+    check run("git checkout -q " & mainBranch, dir).code == 0
+    check run("git merge -q --no-ff -m \"chore: merge feature\" feature", dir).code == 0
+
+    let dryRun = pending(dir)
+    check "1.0.0 -> 1.1.0 (minor)" in dryRun
+    check "- feat: on branch" in dryRun
+    check "- fix: on main" in dryRun
+    check "- fix: also on branch" in dryRun

@@ -219,9 +219,10 @@ suite "layout from detected manifests":
       "/repo", independent, @["cli.nimble", "package.json"], quiet = true
     ).strategy == wsIndependent
 
-  test "a repository with no manifest at all is rejected":
-    expect IOError:
-      discard workspaceLayout("/repo", emptyConfig, @[], quiet = true)
+  test "a tree with no manifest at its root lays out no packages":
+    # A commit merged in from another repository looks like this. Only a
+    # working tree without one is a mistake, and `loadWorkspace` says so.
+    check workspaceLayout("/repo", emptyConfig, @[], quiet = true).packages.len == 0
 
   test "declared packages are used as given, ignoring what was detected":
     let declared = NimverConfig(
