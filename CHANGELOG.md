@@ -1,5 +1,11 @@
 # Changelog
 
+## [5.1.2] - 2026-10-12
+
+### Commits
+- fix: skip merged-in history whose tree holds no project manifest
+- chore: add more tags to npm package
+
 ## [5.1.1] - 2026-09-24
 
 ### Commits
