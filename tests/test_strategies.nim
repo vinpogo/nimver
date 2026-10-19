@@ -106,6 +106,12 @@ suite "workspace strategies":
     check "web-v1.1.0" in tags
     check "cli-v1.1.0" in tags
 
+  test "an independent release tag is annotated":
+    let dir = freshWorkspaceRepo("independent-annotated-tag", strategy = "independent")
+    discard commitFile(dir, "packages/web/index.js", "export {}\n", "feat: add web")
+    check run("nimver bump web", dir).code == 0
+    check run("git cat-file -t web-v1.1.0", dir).output.strip() == "tag"
+
   test "independent packages can drift apart in version":
     let dir = freshWorkspaceRepo("independent-drift", strategy = "independent")
     discard commitFile(dir, "packages/web/index.js", "export {}\n", "fix!: break web")

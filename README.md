@@ -53,8 +53,9 @@ BREAKING CHANGE: describe the break
 When you're ready to cut a release:
 
 ```sh
-nimver bump           # updates the manifest + CHANGELOG.md, commits, and tags
-nimver bump --dry-run # what it would do, and the changelog entry it would write
+nimver bump            # updates the manifest + CHANGELOG.md, commits, and tags
+nimver bump --dry-run  # what it would do, and the changelog entry it would write
+git push --follow-tags # pushes the release commit together with its tags
 ```
 
 ### What counts as pending

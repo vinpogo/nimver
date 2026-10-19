@@ -37,7 +37,7 @@ proc gitCommit*(repoRoot: string, message: string) =
   discard runGit(@["-C", repoRoot, "commit", "-m", message])
 
 proc gitTag*(repoRoot: string, tag: string) =
-  discard runGit(@["-C", repoRoot, "tag", tag])
+  discard runGit(@["-C", repoRoot, "tag", "-a", tag, "-m", tag])
 
 proc gitCommitsIn*(repoRoot: string, revisionRange: string): seq[CommitRecord] =
   runGit(

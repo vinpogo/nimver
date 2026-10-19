@@ -24,6 +24,19 @@ suite "bump":
     let (tags, _) = run("git tag", dir)
     check "v1.1.0" in tags
 
+  test "the release tag is annotated, so `git push --follow-tags` pushes it":
+    let dir = freshRepo("bump-annotated-tag")
+    discard commitFile(dir, "a.txt", "hi", "feat: add feature")
+    check run("nimver bump", dir).code == 0
+    check run("git cat-file -t v1.1.0", dir).output.strip() == "tag"
+
+  test "an annotated release tag is the base of the next release":
+    let dir = freshRepo("bump-after-annotated-tag")
+    discard commitFile(dir, "a.txt", "hi", "feat: add feature")
+    check run("nimver bump", dir).code == 0
+    discard commitFile(dir, "b.txt", "hi", "fix: fix it")
+    check "1.1.0 -> 1.1.1" in run("nimver bump", dir).output
+
   test "a detected single manifest keeps flat release naming by default":
     # No [workspace] section at all: the default strategy is independent, but a
     # lone detected package must still release exactly as it did before
