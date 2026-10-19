@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.2.0] - 2026-10-19
+
+- Release tags are now annotated, so `git push --follow-tags` pushes them along with the release commit.
+
+### Commits
+- feat: create annotated release tags
+
 ## [5.1.2] - 2026-10-12
 
 ### Commits
