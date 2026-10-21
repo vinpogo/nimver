@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.3.0] - 2026-10-21
+
+- A new `nimver changelog [<package>] <version>` command prints the changelog entry `bump` wrote for a released version, ready to use as release notes.
+
+### Commits
+- feat: add changelog command
+- ci: generate release notes from the shipped binary
+- conf: add new commit types
+- ref: rewrite everything to use results and defer executrion to top-level
+
 ## [5.2.0] - 2026-10-19
 
 - Release tags are now annotated, so `git push --follow-tags` pushes them along with the release commit.
