@@ -68,16 +68,77 @@ jobs:
           path: dist/nimver-${{ matrix.target }}${{ matrix.extension }}
           if-no-files-found: error
 
+  package:
+    name: npm package
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The package ships the release binaries as they are, picked by
+      # bin/nimver.mjs at run time.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nimver-*
+          path: dist
+          merge-multiple: true
+
+      - name: Restore the executable bit
+        # Artifacts lose it on upload, and npm packs files with the mode they
+        # have on disk.
+        run: chmod +x dist/nimver-*
+
+      - name: Pack
+        run: |
+          mkdir package
+          npm pack --pack-destination package
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: package/vingy-nimver-*.tgz
+          if-no-files-found: error
+
+  smoke:
+    # The tarball that gets published, installed on every platform it serves:
+    # a binary that builds is not yet one that npm's bin link can start.
+    name: smoke ${{ matrix.os }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-15-intel
+          - windows-2025
+          - windows-11-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: package
+
+      - name: Install and use the package
+        shell: bash
+        run: .github/workflows/smoke_npm.sh package/vingy-nimver-*.tgz
+
   npm:
     name: npm
-    needs: binaries
+    needs: smoke
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # The OIDC token npm trusted publishing authenticates with.
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24.20.0"
@@ -88,28 +149,10 @@ jobs:
         # guaranteed to be recent enough.
         run: npm install -g npm@latest
 
-      # The package ships the release binaries as they are, picked by
-      # bin/nimver.mjs at run time.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: dist
-          merge-multiple: true
-
-      - name: Restore the executable bit
-        # Artifacts lose it on upload, and npm packs files with the mode they
-        # have on disk.
-        run: chmod +x dist/nimver-*
-
-      - name: Smoke test the package
-        run: |
-          npm pack --pack-destination "$RUNNER_TEMP"
-          cd "$(mktemp -d)"
-          npm init -y > /dev/null
-          npm install "$RUNNER_TEMP"/vingy-nimver-*.tgz
-          npx nimver version
-
-      - name: Check what would be published
-        run: npm pack --dry-run
+          name: npm-package
+          path: package
 
       - name: Work out which track this tag is on
         # `v1.2.0-alpha.1` is a prerelease on track `alpha`; `v1.2.0` is a
@@ -135,9 +178,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           if [ -n "${{ steps.track.outputs.name }}" ]; then
-            npm publish --provenance --access public --tag "${{ steps.track.outputs.name }}"
+            npm publish package/vingy-nimver-*.tgz --provenance --access public --tag "${{ steps.track.outputs.name }}"
           else
-            npm publish --provenance --access public
+            npm publish package/vingy-nimver-*.tgz --provenance --access public
           fi
 
   publish:
@@ -153,6 +196,9 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
+          # The binaries, not the npm tarball: everything here is uploaded to
+          # the release.
+          pattern: nimver-*
           path: artifacts
           merge-multiple: true
 

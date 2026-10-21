@@ -1,0 +1,2 @@
+# Run by bash on Windows runners too, where a CRLF checkout would break it.
+*.sh text eol=lf
