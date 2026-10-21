@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.3.1-beta.1] - 2026-10-21
+
+### Commits
+- ref(npm): ship prebuilt native binaries
+
 ## [5.3.0] - 2026-10-21
 
 - A new `nimver changelog [<package>] <version>` command prints the changelog entry `bump` wrote for a released version, ready to use as release notes.
