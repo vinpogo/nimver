@@ -78,3 +78,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/install" "$RUNNER_TEMP"/vingy-nimver-*.tgz
           "$RUNNER_TEMP/install/node_modules/.bin/nimver" version
           "$RUNNER_TEMP/install/node_modules/.bin/nimver" bump --dry-run
+
+      - name: Smoke test the path hooks installed by 5.3.0 or earlier call
+        run: |
+          "$RUNNER_TEMP/install/node_modules/@vingy/nimver/bin/nimver.js" version

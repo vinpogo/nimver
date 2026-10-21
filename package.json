@@ -28,6 +28,7 @@
     "nimver": "bin/nimver.mjs"
   },
   "files": [
+    "bin/nimver.js",
     "bin/nimver.mjs",
     "dist/nimver-*"
   ],
