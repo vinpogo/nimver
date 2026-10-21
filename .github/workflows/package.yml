@@ -1,0 +1,132 @@
+name: package
+
+# Builds every release binary, packs them into the npm package, and installs
+# that package on every platform it serves. Run before each release, and on
+# every push to main so a broken platform shows up before it is tagged.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Linux builds link musl statically, so one binary runs on glibc and
+        # Alpine alike. The Intel macOS binary is cross-compiled on Apple
+        # silicon.
+        include:
+          - os: ubuntu-24.04
+            target: linux-amd64
+            musl: true
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            musl: true
+          - os: macos-26
+            target: macos-arm64
+          - os: macos-26
+            target: macos-amd64
+            nimflags: --cpu:amd64 --passC:"-arch x86_64" --passL:"-arch x86_64"
+          - os: windows-2025
+            target: windows-amd64
+            extension: .exe
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
+        with:
+          nim-version: "2.2.12"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch dependencies
+        # Writes nimble.paths, which config.nims hands to the plain `nim`
+        # invocations below: with a lock file present, nim does not search the
+        # nimble package directory by itself.
+        run: nimble setup -y
+
+      - name: Install musl
+        if: matrix.musl
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
+      - name: Build binary
+        shell: bash
+        env:
+          NIMVER_NIMFLAGS: ${{ matrix.musl && '--gcc.exe:musl-gcc --gcc.linkerexe:musl-gcc --passL:-static' || matrix.nimflags }}
+        run: nimble buildBinary -y
+
+      - name: Name the artifact after its target
+        shell: bash
+        run: mv "dist/nimver${{ matrix.extension }}" "dist/nimver-${{ matrix.target }}${{ matrix.extension }}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nimver-${{ matrix.target }}
+          path: dist/nimver-${{ matrix.target }}${{ matrix.extension }}
+          if-no-files-found: error
+
+  package:
+    name: npm package
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # The package ships the release binaries as they are, picked by
+      # bin/nimver.mjs at run time.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: nimver-*
+          path: dist
+          merge-multiple: true
+
+      - name: Restore the executable bit
+        # Artifacts lose it on upload, and npm packs files with the mode they
+        # have on disk.
+        run: chmod +x dist/nimver-*
+
+      - name: Pack
+        run: |
+          mkdir package
+          npm pack --pack-destination package
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm-package
+          path: package/vingy-nimver-*.tgz
+          if-no-files-found: error
+
+  smoke:
+    # The tarball that gets published, installed on every platform it serves:
+    # a binary that builds is not yet one that npm's bin link can start.
+    name: smoke ${{ matrix.os }}
+    needs: package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-26
+          - macos-15-intel
+          - windows-2025
+          - windows-11-arm
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-package
+          path: package
+
+      - name: Install and use the package
+        shell: bash
+        run: .github/workflows/smoke_npm.sh package/vingy-nimver-*.tgz
