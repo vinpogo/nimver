@@ -204,10 +204,26 @@ suite "manifest adapters":
     check code == 0
     check "1.0.0 -> 1.0.1" in output
     check symlinkExists(dir / "pkg.nimble")
-    # The release commit carries the version, not just the changelog.
     check run("git show v1.0.1:packaging/pkg.nimble", dir).output ==
       "version = \"1.0.1\"\n"
     check run("git status --porcelain", dir).output == ""
+
+  test "a manifest linked from outside the repository is still released":
+    let dir = freshRepo("outside-linked-manifest")
+    let shared = dir & "-shared"
+    removeDir(shared)
+    createDir(shared)
+    moveFile(dir / "pkg.nimble", shared / "pkg.nimble")
+    createSymlink(shared / "pkg.nimble", dir / "pkg.nimble")
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: link manifest\"", dir)
+    discard commitFile(dir, "a.txt", "hi", "fix: patch")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "Created tag v1.0.1" in output
+    check "v1.0.1" in tags(dir)
+    check readFile(shared / "pkg.nimble") == "version = \"1.0.1\"\n"
 
   test "a dangling link is not taken for a manifest":
     let dir = freshRepo("dangling-manifest")
