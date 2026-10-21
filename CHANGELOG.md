@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.3.1-beta.4] - 2026-10-21
+
+### Commits
+- ref: remove support for symlinked manifests
+
 ## [5.3.1-beta.3] - 2026-10-21
 
 ### Commits
