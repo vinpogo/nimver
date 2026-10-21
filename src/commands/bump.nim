@@ -145,18 +145,6 @@ proc checkTagsAreFree(
       )
   ok()
 
-proc stagedPath(repoRoot, path: string): Result[string, string] =
-  ## The file a link leads to, so that what was written through the link is
-  ## committed. Git refuses a file outside the repository, so a link out of it
-  ## is staged as itself.
-  if not fileAt(path):
-    return ok(path)
-  let target = ?resolvedPath(path)
-  if target.isRelativeTo(?resolvedPath(repoRoot)):
-    ok(target)
-  else:
-    ok(path)
-
 proc releaseEffects(
     repoRoot: string, projectWorkspace: Workspace, releases: seq[PackageRelease]
 ): Result[Effects, string] =
@@ -174,11 +162,6 @@ proc releaseEffects(
       else:
         none(string)
     changelogContents.add((changelog.path, withSection(existing, changelog.text)))
-  var stagedPaths: seq[string] = @[]
-  for (manifest, _) in manifestWrites:
-    stagedPaths.add(?stagedPath(repoRoot, manifest.filePath))
-  for (path, _) in changelogContents:
-    stagedPaths.add(?stagedPath(repoRoot, path))
 
   var effects: Effects = @[]
   for (manifest, contents) in manifestWrites:
@@ -190,7 +173,9 @@ proc releaseEffects(
     effects.add(writeTo(path, contents))
     effects.add(say("Updated " & path))
 
-  for path in stagedPaths:
+  for (manifest, _) in manifestWrites:
+    effects.add(stage(repoRoot, manifest.filePath))
+  for (path, _) in changelogContents:
     effects.add(stage(repoRoot, path))
   effects.add(commit(repoRoot, releaseCommitSubject(projectWorkspace, releases)))
   effects.add(say("Created release commit."))
