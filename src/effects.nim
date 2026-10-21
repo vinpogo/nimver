@@ -46,7 +46,11 @@ proc git(arguments: seq[string]): Effect =
     ok()
 
 proc stage*(repoRoot, path: string): Effect =
-  git(@["-C", repoRoot, "add", "-A", "--", path])
+  ## The file itself when `path` is a link to it: what was written through the
+  ## link would otherwise be left out of the commit.
+  proc(): Result[void, string] =
+    discard ?runGit(@["-C", repoRoot, "add", "-A", "--", ?resolvedPath(path)])
+    ok()
 
 proc commit*(repoRoot, message: string): Effect =
   git(@["-C", repoRoot, "commit", "-m", message])

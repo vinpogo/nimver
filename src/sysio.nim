@@ -39,12 +39,18 @@ proc makeExecutable*(path: string): Result[void, string] =
   catch(setFilePermissions(path, ExecutablePermissions)).mapErr(e => e.msg)
 
 proc regularFilesIn(directory: string): seq[string] =
+  ## Links count by what they point at: a link to a file is a file, a dangling
+  ## one is not.
   for entryKind, entryPath in walkDir(directory):
-    if entryKind == pcFile:
+    if entryKind in {pcFile, pcLinkToFile} and fileExists(entryPath):
       result.add(entryPath)
 
 proc filesIn*(directory: string): Result[seq[string], string] =
   catch(regularFilesIn(directory)).mapErr(e => e.msg)
+
+proc resolvedPath*(path: string): Result[string, string] =
+  ## Absolute, with every link along the way followed.
+  catch(expandFilename(path)).mapErr(e => e.msg)
 
 proc runCommand*(
     command: string, arguments: seq[string]

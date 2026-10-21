@@ -190,3 +190,31 @@ suite "manifest adapters":
     check run("nimver bump", dir).code == 0
 
     check parseJson(readFile(dir / "package.json"))["version"].getStr() == "1.1.0-rc.2"
+
+  test "a root manifest that links to a file elsewhere is released through it":
+    let dir = freshRepo("linked-manifest")
+    createDir(dir / "packaging")
+    moveFile(dir / "pkg.nimble", dir / "packaging" / "pkg.nimble")
+    createSymlink("packaging" / "pkg.nimble", dir / "pkg.nimble")
+    discard run("git add -A", dir)
+    discard run("git commit -q --no-verify -m \"chore: link manifest\"", dir)
+    discard commitFile(dir, "a.txt", "hi", "fix: patch")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "1.0.0 -> 1.0.1" in output
+    check symlinkExists(dir / "pkg.nimble")
+    # The release commit carries the version, not just the changelog.
+    check run("git show v1.0.1:packaging/pkg.nimble", dir).output ==
+      "version = \"1.0.1\"\n"
+    check run("git status --porcelain", dir).output == ""
+
+  test "a dangling link is not taken for a manifest":
+    let dir = freshRepo("dangling-manifest")
+    check commitFile(dir, "a.txt", "hi", "feat: a").code == 0
+    removeFile(dir / "pkg.nimble")
+    createSymlink("missing.nimble", dir / "pkg.nimble")
+
+    let (output, code) = run("nimver bump", dir)
+    check code != 0
+    check "No supported project manifest found" in output
