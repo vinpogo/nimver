@@ -62,6 +62,15 @@ git push --follow-tags # pushes the release commit together with its tags
 
 `bump` looks back from `HEAD` to the last release of the package within the track it is releasing — the newest commit carrying that package's release tag. Every commit in between is a pending change, and its type decides the bump.
 
+### Reading a release's changelog entry
+
+`changelog` prints the entry `bump` wrote for a version, ready to use as release notes:
+
+```sh
+nimver changelog 1.2.0       # or v1.2.0, or a prerelease: 1.3.0-rc.1
+nimver changelog web 1.2.0   # in an independent monorepo, name the package
+```
+
 ## Below 1.0.0
 
 A package whose major version is `0` makes none of the promises semver makes for a released one: `^0.4.2` lets a consumer take `0.4.3` and no further. The minor is already the breaking axis down there, so nimver holds every bump a notch down until you say the project is ready:
@@ -259,6 +268,7 @@ refuses `--package`.
 nimver init
 nimver install-hooks [--force]
 nimver bump [<package>] [--dry-run] [--stable]
+nimver changelog [<package>] <version>
 nimver track
 nimver track enter <name> [--package <name>] [--stable]
 nimver track exit [--package <name>]

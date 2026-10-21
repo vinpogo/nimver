@@ -8,6 +8,7 @@ import ./commands/installHooks
 import ./commands/checkCommitMsg
 import ./commands/bump
 import ./commands/track
+import ./commands/changelog
 
 const Usage = """
 nimver - semantic versioning from Conventional Commits
@@ -16,6 +17,7 @@ Usage:
   nimver init
   nimver install-hooks [--force]
   nimver bump [<package>] [--dry-run] [--stable]
+  nimver changelog [<package>] <version>
   nimver track
   nimver track enter <name> [--package <name>] [--stable]
   nimver track exit [--package <name>]
@@ -83,6 +85,21 @@ when isMainModule:
       cmdBump(
         repoRoot, requestedPackageName, "--dry-run" in params, "--stable" in params
       )
+    of "changelog":
+      for param in params:
+        if param.startsWith("-"):
+          writeError("nimver: unknown option '" & param & "' for `nimver changelog`")
+          quit(1)
+      case params.len
+      of 1:
+        cmdChangelog(repoRoot, none(string), params[0])
+      of 2:
+        cmdChangelog(repoRoot, some(params[0]), params[1])
+      else:
+        writeError(
+          "nimver: `changelog` takes a version, optionally preceded by a package name"
+        )
+        quit(1)
     of "track":
       cmdTrack(repoRoot, params)
     else:

@@ -132,6 +132,36 @@ proc changelogPackageLabelFor(
       return package.name
   ""
 
+proc releasedChangelogFor*(
+    repoRoot: string, projectWorkspace: Workspace, requestedPackageName: Option[string]
+): tuple[path, packageLabel: string] =
+  ## Where a package's released sections were written, and the name their
+  ## headings carry: the same file and label `bump` used for them.
+  case projectWorkspace.strategy
+  of wsFixed:
+    if requestedPackageName.isSome:
+      raise newException(
+        IOError,
+        "workspace strategy is 'fixed', so every package shares the one changelog at the repository root. Drop the package argument, or set strategy = independent.",
+      )
+    (repoRoot / ChangelogName, "")
+  of wsIndependent:
+    let package =
+      if requestedPackageName.isSome:
+        projectWorkspace.findPackage(requestedPackageName.get)
+      elif projectWorkspace.packages.len == 1:
+        projectWorkspace.packages[0]
+      else:
+        raise newException(
+          IOError,
+          "packages are versioned independently, so name the one whose changelog to read: " &
+            projectWorkspace.packageNames().join(", "),
+        )
+    (
+      changelogPathFor(repoRoot, package),
+      changelogPackageLabelFor(repoRoot, projectWorkspace, package),
+    )
+
 func claimedBy(entries: seq[ChangeEntry], package: WorkspacePackage): seq[ChangeEntry] =
   entries.filterIt(
     package.name in it.affectedPackages or
