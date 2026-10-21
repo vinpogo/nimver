@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.3.1-beta.2] - 2026-10-21
+
+### Commits
+- fix: preserve legacy hook entry point
+
 ## [5.3.1-beta.1] - 2026-10-21
 
 ### Commits
