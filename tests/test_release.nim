@@ -9,6 +9,7 @@ import workspace
 import config
 import changes
 import semver
+import results
 import adapters/manifest
 import ./builders
 
@@ -34,8 +35,8 @@ proc release(
     name: name,
     manifests: @[manifestAt(name & ".nimble")],
     entries: entries,
-    current: parseSemVer("0.1.0"),
-    next: parseSemVer(next),
+    current: parseSemVer("0.1.0").value,
+    next: parseSemVer(next).value,
     level: level,
     # At 1.0.0 and above the two are one: nothing is held, so a release that is
     # not about the holding says so by leaving them equal.

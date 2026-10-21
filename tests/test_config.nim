@@ -5,6 +5,7 @@
 import std/[unittest, options, strutils, tables, os]
 import config
 import commitparser
+import results
 import semver
 import ./support
 
@@ -18,25 +19,24 @@ fix = patch
 chore = none
 wip = ignore
 """, "config.ini",
-    )
+    ).value
     check parsed.types["feat"] == blMinor
     check parsed.types["fix"] == blPatch
     check parsed.types["chore"] == blNone
     check parsed.types["wip"] == blIgnore
 
   test "type names are lowercased":
-    let parsed = parseConfig("[types]\nFeat = minor\n", "config.ini")
+    let parsed = parseConfig("[types]\nFeat = minor\n", "config.ini").value
     check parsed.types["feat"] == blMinor
 
   test "a missing types section maps nothing":
-    check parseConfig("", "config.ini").types.len == 0
+    check parseConfig("", "config.ini").value.types.len == 0
 
   test "an unknown bump level is rejected":
-    expect ValueError:
-      discard parseConfig("[types]\nfeat = huge\n", "config.ini")
+    check parseConfig("[types]\nfeat = huge\n", "config.ini").isErr
 
   test "the shipped default config maps the documented types":
-    let parsed = parseConfig(DefaultConfig, "config.ini")
+    let parsed = parseConfig(DefaultConfig, "config.ini").value
     check parsed.types["feat"] == blMinor
     check parsed.types["fix"] == blPatch
     check parsed.types["docs"] == blNone
@@ -47,72 +47,69 @@ wip = ignore
 
 suite "unknown types":
   test "rejecting them is the default, and what `reject` spells out":
-    check parseConfig("[types]\nfeat = minor\n", "config.ini").unknownType.isNone
-    check parseConfig("[commits]\nunknownType = reject\n", "config.ini").unknownType.isNone
-    check parseConfig(DefaultConfig, "config.ini").unknownType.isNone
+    check parseConfig("[types]\nfeat = minor\n", "config.ini").value.unknownType.isNone
+    check parseConfig("[commits]\nunknownType = reject\n", "config.ini").value.unknownType.isNone
+    check parseConfig(DefaultConfig, "config.ini").value.unknownType.isNone
 
   test "a bump level accepts them at that level":
-    check parseConfig("[commits]\nunknownType = patch\n", "config.ini").unknownType ==
+    check parseConfig("[commits]\nunknownType = patch\n", "config.ini").value.unknownType ==
       some(blPatch)
-    check parseConfig("[commits]\nunknownType = ignore\n", "config.ini").unknownType ==
+    check parseConfig("[commits]\nunknownType = ignore\n", "config.ini").value.unknownType ==
       some(blIgnore)
 
   test "anything else is rejected":
-    expect ValueError:
-      discard parseConfig("[commits]\nunknownType = bogus\n", "config.ini")
+    check parseConfig("[commits]\nunknownType = bogus\n", "config.ini").isErr
 
   test "a listed type still wins over the fallback":
     let config = parseConfig(
       "[types]\nfeat = minor\n[commits]\nunknownType = patch\n", "config.ini"
-    )
+    ).value
     check config.validateAndLookup(parseCommitMessage("feat: a").value) == some(blMinor)
     check config.validateAndLookup(parseCommitMessage("net/http: a").value) ==
       some(blPatch)
 
   test "a breaking unknown type is still a major bump":
-    let config = parseConfig("[commits]\nunknownType = patch\n", "config.ini")
+    let config = parseConfig("[commits]\nunknownType = patch\n", "config.ini").value
     check config.validateAndLookup(parseCommitMessage("net/http!: a").value) ==
       some(blMajor)
 
   test "without the fallback an unknown type resolves to nothing":
-    let config = parseConfig("[types]\nfeat = minor\n", "config.ini")
+    let config = parseConfig("[types]\nfeat = minor\n", "config.ini").value
     check config.validateAndLookup(parseCommitMessage("net/http: a").value).isNone
 
 suite "workspace strategy":
   test "fixed and independent are both accepted":
-    check parseConfig("[workspace]\nstrategy = fixed\n", "config.ini").workspaceStrategy ==
+    check parseConfig("[workspace]\nstrategy = fixed\n", "config.ini").value.workspaceStrategy ==
       wsFixed
-    check parseConfig("[workspace]\nstrategy = independent\n", "config.ini").workspaceStrategy ==
+    check parseConfig("[workspace]\nstrategy = independent\n", "config.ini").value.workspaceStrategy ==
       wsIndependent
 
   test "a named strategy is recorded as specified":
-    check parseConfig("[workspace]\nstrategy = fixed\n", "config.ini").strategyWasSpecified
+    check parseConfig("[workspace]\nstrategy = fixed\n", "config.ini").value.strategyWasSpecified
 
   test "an empty strategy reads as unspecified rather than invalid":
-    let parsed = parseConfig("[workspace]\nstrategy =\n", "config.ini")
+    let parsed = parseConfig("[workspace]\nstrategy =\n", "config.ini").value
     check parsed.workspaceStrategy == wsIndependent
     check parsed.strategyWasSpecified == false
 
   test "a missing workspace section leaves the strategy unspecified":
-    let parsed = parseConfig("[types]\nfeat = minor\n", "config.ini")
+    let parsed = parseConfig("[types]\nfeat = minor\n", "config.ini").value
     check parsed.workspaceStrategy == wsIndependent
     check parsed.strategyWasSpecified == false
 
   test "an unknown strategy is rejected":
-    expect ValueError:
-      discard parseConfig("[workspace]\nstrategy = pinned\n", "config.ini")
+    check parseConfig("[workspace]\nstrategy = pinned\n", "config.ini").isErr
 
 suite "shared changes":
   test "changes outside every package are shared by default":
-    check parseConfig("", "config.ini").sharedChanges == scAll
+    check parseConfig("", "config.ini").value.sharedChanges == scAll
 
   test "sharedChanges can be turned off":
-    check parseConfig("[workspace]\nsharedChanges = none\n", "config.ini").sharedChanges ==
+    check parseConfig("[workspace]\nsharedChanges = none\n", "config.ini").value.sharedChanges ==
       scNone
 
   test "an unknown sharedChanges kind is rejected":
-    expect ValueError:
-      discard parseConfig("[workspace]\nsharedChanges = some\n", "config.ini")
+    check parseConfig("[workspace]\nsharedChanges = some\n", "config.ini").isErr
 
 suite "packages":
   test "a package section names a package and its manifest":
@@ -125,7 +122,7 @@ manifest = packages/web/package.json
 manifest = packages/cli/cli.nimble
 """,
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 2
     check parsed.packages[0].name == "web"
     check parsed.packages[0].manifestPath == "packages/web/package.json"
@@ -140,7 +137,7 @@ manifest = packages/cli/cli.nimble
 manifest = packages/widgets/package.json
 """,
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/widgets"
     check parsed.packages[0].manifestPath == "packages/widgets/package.json"
@@ -160,7 +157,7 @@ manifest = packages/cli/cli.nimble
 feat = minor
 """,
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 2
     check parsed.packages[1].name == "cli"
     check parsed.types["feat"] == blMinor
@@ -169,7 +166,7 @@ feat = minor
     let parsed = parseConfig(
       "[\"package.@acme/widgets\"]\nmanifest = packages/widgets/package.json\n",
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/widgets"
 
@@ -177,22 +174,21 @@ feat = minor
     check parseConfig(
       "; [package.@acme/widgets]\n; manifest = packages/widgets/package.json\n",
       "config.ini",
-    ).packages.len == 0
+    ).value.packages.len == 0
 
   test "a comment after a scoped header is not read as part of the name":
     let parsed = parseConfig(
       "[package.@acme/widgets] ; the one with the buttons\nmanifest = packages/widgets/package.json\n",
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/widgets"
 
   test "an unquoted glob is still rejected inside a scoped section":
-    expect IOError:
-      discard parseConfig(
-        "[package.@acme/widgets]\nmanifest = packages/widgets/package.json\nsourceFiles = packages/widgets/**\n",
-        "config.ini",
-      )
+    check parseConfig(
+      "[package.@acme/widgets]\nmanifest = packages/widgets/package.json\nsourceFiles = packages/widgets/**\n",
+      "config.ini",
+    ).isErr
 
   test "sourceFiles is a comma-separated list of patterns":
     let parsed = parseConfig(
@@ -202,38 +198,35 @@ manifest = packages/web/package.json
 sourceFiles = "packages/web/**, docs/**"
 """,
       "config.ini",
-    )
+    ).value
     check parsed.packages[0].sourceFilePatterns == some(@["packages/web/**", "docs/**"])
 
   test "an empty sourceFiles leaves attribution to nearest ancestor":
     let parsed = parseConfig(
       "[package.web]\nmanifest = packages/web/package.json\nsourceFiles =\n",
       "config.ini",
-    )
+    ).value
     check parsed.packages[0].sourceFilePatterns.isNone
 
   test "an unquoted glob is rejected, since ini would truncate it at the star":
-    expect IOError:
-      discard parseConfig(
-        "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = packages/web/**\n",
-        "config.ini",
-      )
+    check parseConfig(
+      "[package.web]\nmanifest = packages/web/package.json\nsourceFiles = packages/web/**\n",
+      "config.ini",
+    ).isErr
 
   test "a package without a manifest is rejected":
-    expect IOError:
-      discard
-        parseConfig("[package.web]\nsourceFiles = \"packages/web/**\"\n", "config.ini")
+    check parseConfig(
+      "[package.web]\nsourceFiles = \"packages/web/**\"\n", "config.ini"
+    ).isErr
 
   test "a misspelled manifest key is rejected rather than read as none":
-    expect IOError:
-      discard parseConfig(
-        "[package.web]\nmanifests = packages/web/package.json\n", "config.ini"
-      )
+    check parseConfig(
+      "[package.web]\nmanifests = packages/web/package.json\n", "config.ini"
+    ).isErr
 
   test "a package section with no keys at all is a package missing its manifest":
     # Not "a package nobody declared": the section is there to be read.
-    expect IOError:
-      discard parseConfig("[package.web]\n", "config.ini")
+    check parseConfig("[package.web]\n", "config.ini").isErr
 
   test "the same package section twice is merged, the last manifest winning":
     let parsed = parseConfig(
@@ -245,38 +238,36 @@ manifest = packages/web/package.json
 manifest = packages/other/package.json
 """,
       "config.ini",
-    )
+    ).value
     check parsed.packages.len == 1
     check parsed.packages[0].manifestPath == "packages/other/package.json"
 
   test "sections differing only in the case of the package prefix are rejected":
-    expect IOError:
-      discard parseConfig(
-        """
+    check parseConfig(
+      """
 [package.web]
 manifest = packages/web/package.json
 
 [Package.web]
 manifest = packages/other/package.json
 """,
-        "config.ini",
-      )
+      "config.ini",
+    ).isErr
 
   test "two packages sharing a manifest are rejected":
-    expect IOError:
-      discard parseConfig(
-        """
+    check parseConfig(
+      """
 [package.web]
 manifest = packages/web/package.json
 
 [package.cli]
 manifest = packages/web/package.json
 """,
-        "config.ini",
-      )
+      "config.ini",
+    ).isErr
 
 suite "looking up a commit's level":
-  let parsed = parseConfig("[types]\nfeat = minor\nchore = none\n", "config.ini")
+  let parsed = parseConfig("[types]\nfeat = minor\nchore = none\n", "config.ini").value
 
   test "a mapped type yields its level":
     check parsed.validateAndLookup(ParsedCommit(commitType: "feat")) == some(blMinor)
@@ -299,7 +290,7 @@ suite "package names":
   ## that neither can spell is refused where it is written rather than halfway
   ## through a release.
 
-  proc parsePackage(packageName: string): NimverConfig =
+  proc parsePackage(packageName: string): Result[NimverConfig, string] =
     parseConfig(
       "[package." & packageName & "]\nmanifest = packages/a/package.json\n",
       "config.ini",
@@ -309,34 +300,28 @@ suite "package names":
     for packageName in [
       "@acme/widgets", "web", "package.json", "cli.nimble", "root", "web,cli"
     ]:
-      check parsePackage(packageName).packages[0].name == packageName
+      check parsePackage(packageName).value.packages[0].name == packageName
 
   test "a character neither a tag nor a commit scope allows is rejected":
     for packageName in ["my package", "web*", "we~b", "web:cli", "web(cli)", "web\\cli"]:
-      expect IOError:
-        discard parsePackage(packageName)
+      check parsePackage(packageName).isErr
 
   test "a name git would refuse as a ref is rejected":
     for packageName in [
       "a..b", "@acme//widgets", "/widgets", "widgets/", ".hidden", "a/.b", "a.lock/b"
     ]:
-      expect IOError:
-        discard parsePackage(packageName)
+      check parsePackage(packageName).isErr
 
   test "a name git tag would read as an option is rejected":
-    expect IOError:
-      discard parsePackage("-widgets")
+    check parsePackage("-widgets").isErr
 
   test "a bare at sign is rejected":
-    expect IOError:
-      discard parsePackage("@")
+    check parsePackage("@").isErr
 
   test "a half-quoted header is a name with quotes in it, and is rejected":
-    expect IOError:
-      discard parseConfig(
-        "[package.\"@acme/widgets\"]\nmanifest = packages/a/package.json\n",
-        "config.ini",
-      )
+    check parseConfig(
+      "[package.\"@acme/widgets\"]\nmanifest = packages/a/package.json\n", "config.ini"
+    ).isErr
 
 suite "configurations that say nothing nimver can act on":
   ## A mistake in a config file is otherwise a silence rather than an error, and
@@ -344,64 +329,38 @@ suite "configurations that say nothing nimver can act on":
   ## declared any - which releases the wrong thing instead of saying so.
 
   test "an unknown section is rejected, with the nearest known one named":
-    let message = (
-      try:
-        discard parseConfig("[packages.web]\nmanifest = a/package.json\n", "config.ini")
-        ""
-      except IOError as failure:
-        failure.msg
-    )
+    let message =
+      parseConfig("[packages.web]\nmanifest = a/package.json\n", "config.ini").error
     check "Unknown section [packages.web]" in message
     check "did you mean [package.web]?" in message
 
   test "a section nothing resembles lists what there is":
-    let message = (
-      try:
-        discard parseConfig("[notes]\nfoo = bar\n", "config.ini")
-        ""
-      except IOError as failure:
-        failure.msg
-    )
+    let message = parseConfig("[notes]\nfoo = bar\n", "config.ini").error
     check "Unknown section [notes]" in message
     check "[package.<name>]" in message
 
   test "a section spelled in the wrong case is rejected rather than ignored":
     for section in ["[Workspace]\nstrategy = fixed\n", "[Types]\nfeat = minor\n"]:
-      expect IOError:
-        discard parseConfig(section, "config.ini")
+      check parseConfig(section, "config.ini").isErr
 
   test "an unknown setting is rejected, with the nearest known one named":
-    let message = (
-      try:
-        discard parseConfig(
-          "[package.web]\nmanifest = a/package.json\nsourceFile = \"a/**\"\n",
-          "config.ini",
-        )
-        ""
-      except IOError as failure:
-        failure.msg
-    )
+    let message = parseConfig(
+      "[package.web]\nmanifest = a/package.json\nsourceFile = \"a/**\"\n", "config.ini"
+    ).error
     check "Unknown setting 'sourceFile'" in message
     check "did you mean 'sourceFiles'?" in message
 
   test "a commit type is any word, so [types] takes any setting":
-    check parseConfig("[types]\nwhatever = patch\n", "config.ini").types.len == 1
+    check parseConfig("[types]\nwhatever = patch\n", "config.ini").value.types.len == 1
 
   test "a setting written before any section is rejected":
-    expect IOError:
-      discard parseConfig("strategy = fixed\n\n[types]\nfeat = minor\n", "config.ini")
+    check parseConfig("strategy = fixed\n\n[types]\nfeat = minor\n", "config.ini").isErr
 
   test "a line that does not parse is an error, not a shorter file":
     # parsecfg answers a malformed line by dropping the rest of the file.
-    let message = (
-      try:
-        discard parseConfig(
-          "[types]\nfeat = minor\n\n[workspace\nstrategy = fixed\n", "config.ini"
-        )
-        ""
-      except IOError as failure:
-        failure.msg
-    )
+    let message = parseConfig(
+      "[types]\nfeat = minor\n\n[workspace\nstrategy = fixed\n", "config.ini"
+    ).error
     check "Could not read config.ini" in message
 
 suite "section headers written loosely":
@@ -413,8 +372,9 @@ suite "section headers written loosely":
       "[package.web]", "[package.web ]", "[ package.web]", "[\"package.web\"]",
       "[\"package.web\" ]", "[ \"package.web\"]",
     ]:
-      let parsed =
-        parseConfig(header & "\nmanifest = packages/web/package.json\n", "config.ini")
+      let parsed = parseConfig(
+        header & "\nmanifest = packages/web/package.json\n", "config.ini"
+      ).value
       check parsed.packages.len == 1
       check parsed.packages[0].name == "web"
 
@@ -423,15 +383,16 @@ suite "section headers written loosely":
       "[package.@acme/web]", "[package.@acme/web ]", "[ package.@acme/web]",
       "[\"package.@acme/web\"]", "[ \"package.@acme/web\" ]",
     ]:
-      let parsed =
-        parseConfig(header & "\nmanifest = packages/web/package.json\n", "config.ini")
+      let parsed = parseConfig(
+        header & "\nmanifest = packages/web/package.json\n", "config.ini"
+      ).value
       check parsed.packages.len == 1
       check parsed.packages[0].name == "@acme/web"
 
   test "an indented section is still a section":
     let parsed = parseConfig(
       "  [package.@acme/web]\n  manifest = packages/web/package.json\n", "config.ini"
-    )
+    ).value
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/web"
 

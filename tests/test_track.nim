@@ -3,6 +3,8 @@
 
 import std/[os, tables, unittest]
 import track
+import effects
+import results
 
 suite "track names":
   test "letters are accepted, in any case":
@@ -23,100 +25,93 @@ suite "track names":
     check trackNameProblem("alpha") == ""
 
 suite "reading .nimver/track":
-  proc selection(contents: string): TrackSelection =
+  proc selection(contents: string): Result[TrackSelection, string] =
     parseTrackSelection(contents, ".nimver/track")
 
   test "a bare name is the default for every package":
-    let tracks = selection("alpha\n")
+    let tracks = selection("alpha\n").value
     check tracks.default.name == "alpha"
     check tracks.byPackage.len == 0
 
   test "an empty file puts nobody on a track":
     for contents in ["", "\n", "   \n\n"]:
-      let tracks = selection(contents)
+      let tracks = selection(contents).value
       check tracks.default.name == ""
       check not tracks.anyTrack()
 
   test "a keyed line overrides one package":
-    let tracks = selection("alpha\ncli = beta\n")
+    let tracks = selection("alpha\ncli = beta\n").value
     check tracks.default.name == "alpha"
     check tracks.byPackage["cli"].name == "beta"
 
   test "an empty value takes one package off the track":
-    let tracks = selection("alpha\nweb =\n")
+    let tracks = selection("alpha\nweb =\n").value
     check tracks.byPackage["web"].name == ""
 
   test "comments and blank lines are ignored":
-    let tracks = selection("; the whole repo\nalpha\n\n# except\nweb =\n")
+    let tracks = selection("; the whole repo\nalpha\n\n# except\nweb =\n").value
     check tracks.default.name == "alpha"
     check tracks.byPackage["web"].name == ""
 
   test "surrounding whitespace is ignored":
-    let tracks = selection("  alpha  \n  cli   =   beta  \n")
+    let tracks = selection("  alpha  \n  cli   =   beta  \n").value
     check tracks.default.name == "alpha"
     check tracks.byPackage["cli"].name == "beta"
 
   test "a second default is refused":
-    expect IOError:
-      discard selection("alpha\nbeta\n")
+    check selection("alpha\nbeta\n").isErr
 
   test "an invalid track name is refused, wherever it is written":
     # The file is hand-editable, and an unchecked name goes straight into
     # `git tag`.
-    expect IOError:
-      discard selection("rc.2\n")
-    expect IOError:
-      discard selection("web = rc.2\n")
+    check selection("rc.2\n").isErr
+    check selection("web = rc.2\n").isErr
 
   test "a line with no package name is refused":
-    expect IOError:
-      discard selection("= alpha\n")
+    check selection("= alpha\n").isErr
 
   test "a trailing ! records that the track's first version is 1.0.0":
-    let tracks = selection("rc!\n")
+    let tracks = selection("rc!\n").value
     check tracks.default.name == "rc"
     check tracks.default.promotesToStable
 
   test "a track without the marker promotes nothing":
-    check not selection("rc\n").default.promotesToStable
-    check not selection("web = rc\n").byPackage["web"].promotesToStable
+    check not selection("rc\n").value.default.promotesToStable
+    check not selection("web = rc\n").value.byPackage["web"].promotesToStable
 
   test "the marker can be set for one package alone":
-    let tracks = selection("alpha\nweb = rc!\n")
+    let tracks = selection("alpha\nweb = rc!\n").value
     check tracks.byPackage["web"].promotesToStable
     check not tracks.default.promotesToStable
 
   test "the marker is stripped before the name is checked":
     # Otherwise `!` would read as part of the name, and the refusal would be
     # about the wrong thing.
-    expect IOError:
-      discard selection("rc.2!\n")
+    check selection("rc.2!\n").isErr
 
   test "a marker with no track name is refused":
     # `web =` already means off the track, so `web = !` would be saying two
     # things at once.
-    expect IOError:
-      discard selection("!\n")
-    expect IOError:
-      discard selection("web = !\n")
+    check selection("!\n").isErr
+    check selection("web = !\n").isErr
 
   test "a package that no longer exists is not an error":
     # A workspace may legitimately have dropped one, and a release is not the
     # place to fail over a stale line.
-    let tracks = selection("alpha\nlonggone = beta\n")
+    let tracks = selection("alpha\nlonggone = beta\n").value
     check tracks.byPackage["longgone"].name == "beta"
 
 suite "which track a package is on":
   test "an override wins over the default":
-    let tracks = parseTrackSelection("alpha\ncli = beta\n", "t")
+    let tracks = parseTrackSelection("alpha\ncli = beta\n", "t").value
     check tracks.trackFor("cli").name == "beta"
 
   test "the default applies to a package with no override":
-    let tracks = parseTrackSelection("alpha\ncli = beta\n", "t")
+    let tracks = parseTrackSelection("alpha\ncli = beta\n", "t").value
     check tracks.trackFor("web").name == "alpha"
 
   test "an empty override takes a package off, default or not":
-    let tracks = parseTrackSelection("alpha\nweb =\n", "t")
+    let tracks = parseTrackSelection("alpha\nweb =\n", "t").value
     check not tracks.trackFor("web").hasTrack()
     check tracks.trackFor("cli").hasTrack()
 
@@ -126,7 +121,7 @@ suite "which track a package is on":
     check not tracks.anyTrack()
 
   test "an override alone is enough to be on a track":
-    let tracks = parseTrackSelection("web = alpha\n", "t")
+    let tracks = parseTrackSelection("web = alpha\n", "t").value
     check tracks.anyTrack()
     check tracks.trackFor("web").name == "alpha"
     check not tracks.trackFor("cli").hasTrack()
@@ -142,9 +137,9 @@ suite "writing .nimver/track":
     var tracks = TrackSelection(default: Track(name: "alpha"))
     tracks.byPackage["web"] = Track(name: "beta")
     tracks.byPackage["cli"] = noTrack()
-    writeTracks(repoRoot, tracks)
+    check perform(trackEffects(repoRoot, tracks)).isOk
 
-    let readBack = readTracks(repoRoot)
+    let readBack = readTracks(repoRoot).value
     check readBack.default.name == "alpha"
     check readBack.byPackage["web"].name == "beta"
     check readBack.byPackage["cli"].name == ""
@@ -159,9 +154,9 @@ suite "writing .nimver/track":
   test "a promoted track round-trips through the file":
     var tracks = TrackSelection(default: Track(name: "rc", promotesToStable: true))
     tracks.byPackage["web"] = Track(name: "beta")
-    writeTracks(repoRoot, tracks)
+    check perform(trackEffects(repoRoot, tracks)).isOk
 
-    let readBack = readTracks(repoRoot)
+    let readBack = readTracks(repoRoot).value
     check readBack.default == Track(name: "rc", promotesToStable: true)
     check not readBack.byPackage["web"].promotesToStable
 
@@ -177,12 +172,12 @@ suite "writing .nimver/track":
     check renderTrackSelection(tracks) == "alpha\nweb =\n"
 
   test "a missing file means no track":
-    check not readTracks(repoRoot).anyTrack()
+    check not readTracks(repoRoot).value.anyTrack()
 
   test "clearing deletes the file, and says nothing when there is none":
-    writeTracks(repoRoot, TrackSelection(default: Track(name: "alpha")))
+    check perform(trackEffects(repoRoot, TrackSelection(default: Track(name: "alpha")))).isOk
     check fileExists(trackPath(repoRoot))
-    clearTracks(repoRoot)
+    check perform(clearTrackEffects(repoRoot)).isOk
     check not fileExists(trackPath(repoRoot))
-    clearTracks(repoRoot)
-    check not readTracks(repoRoot).anyTrack()
+    check perform(clearTrackEffects(repoRoot)).isOk
+    check not readTracks(repoRoot).value.anyTrack()

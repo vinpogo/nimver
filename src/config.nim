@@ -1,4 +1,5 @@
 import std/[parsecfg, tables, sets, strutils, sequtils, sugar, options]
+import results
 import ./sysio
 import ./semver
 import ./commitparser
@@ -83,29 +84,25 @@ func packageNameProblem(name: string): string =
       return "must not contain a part ending in `.lock`"
   ""
 
-proc validateWorkspaceConfig(config: NimverConfig, path: string) =
+proc validateWorkspaceConfig(config: NimverConfig, path: string): Result[void, string] =
   var seenNames, seenManifests = initHashSet[string]()
   for package in config.packages:
     if package.name.len == 0:
-      raise newException(IOError, "Package name cannot be empty in " & path)
+      return err("Package name cannot be empty in " & path)
     let nameProblem = packageNameProblem(package.name)
     if nameProblem.len > 0:
-      raise newException(
-        IOError,
+      return err(
         "Invalid package name '" & package.name & "' in " & path & ": a name " &
           nameProblem & ". It is released as the tag `" & package.name &
-          "-v1.2.3` and names itself in the release commit.",
+          "-v1.2.3` and names itself in the release commit."
       )
     if package.manifestPath.len == 0:
-      raise newException(
-        IOError, "Package '" & package.name & "' is missing manifest in " & path
-      )
+      return err("Package '" & package.name & "' is missing manifest in " & path)
     if seenNames.containsOrIncl(package.name):
-      raise newException(IOError, "Duplicate package '" & package.name & "' in " & path)
+      return err("Duplicate package '" & package.name & "' in " & path)
     if seenManifests.containsOrIncl(package.manifestPath):
-      raise newException(
-        IOError, "Duplicate package manifest '" & package.manifestPath & "' in " & path
-      )
+      return err("Duplicate package manifest '" & package.manifestPath & "' in " & path)
+  ok()
 
 proc getValue(userConfig: Config, section, key: string): Option[string] =
   if section in userConfig and key in userConfig[section]:
@@ -114,43 +111,52 @@ proc getValue(userConfig: Config, section, key: string): Option[string] =
       return some(value)
   none(string)
 
-func parseWorkspaceStrategy(value: string): WorkspaceStrategy =
+func parseWorkspaceStrategy(value: string): Result[WorkspaceStrategy, string] =
   case value
   of "fixed":
-    wsFixed
+    ok(wsFixed)
   of "independent":
-    wsIndependent
+    ok(wsIndependent)
   else:
-    raise newException(ValueError, "Invalid workspace strategy: " & value)
+    err("Invalid workspace strategy: " & value)
 
-func parseSharedChangesKind(value: string): SharedChangesKind =
+func parseSharedChangesKind(value: string): Result[SharedChangesKind, string] =
   case value
   of "none":
-    scNone
+    ok(scNone)
   of "all":
-    scAll
+    ok(scAll)
   else:
-    raise newException(ValueError, "Invalid shared changes kind: " & value)
+    err("Invalid shared changes kind: " & value)
 
-proc parseUnknownType(value: string): Option[BumpLevel] =
+proc parseUnknownType(value: string): Result[Option[BumpLevel], string] =
   if value.strip().toLowerAscii() == "reject":
-    return none(BumpLevel)
-  try:
-    some(parseBumpLevel(value))
-  except ValueError:
-    raise newException(
-      ValueError,
+    return ok(none(BumpLevel))
+  let level = parseBumpLevel(value).valueOr:
+    return err(
       "Invalid unknownType: " & value &
-        ". Expected reject, ignore, none, patch, minor or major.",
+        ". Expected reject, ignore, none, patch, minor or major."
     )
+  ok(some(level))
+
+proc parsedOr[T](
+    value: Option[string], parse: proc(value: string): Result[T, string], default: T
+): Result[T, string] =
+  ## A setting's parsed value, or `default` when it is not set at all.
+  if value.isSome:
+    parse(value.get)
+  else:
+    ok(default)
 
 func parseSourceFilePatterns(raw: string): seq[string] =
   raw.split(',').mapIt(it.strip()).filterIt(it.len > 0)
 
-proc parseTypes(userConfig: Config): Table[string, BumpLevel] =
+proc parseTypes(userConfig: Config): Result[Table[string, BumpLevel], string] =
+  var types = initTable[string, BumpLevel]()
   if TypesSection in userConfig:
     for commitType, level in userConfig[TypesSection]:
-      result[commitType.strip().toLowerAscii()] = parseBumpLevel(level)
+      types[commitType.strip().toLowerAscii()] = ?parseBumpLevel(level)
+  ok(types)
 
 proc parsePackages(userConfig: Config): seq[PackageConfig] =
   collect:
@@ -163,32 +169,29 @@ proc parsePackages(userConfig: Config): seq[PackageConfig] =
             userConfig.getValue(section, SourceFilesKey).map(parseSourceFilePatterns),
         )
 
-proc parseConfig*(contents, path: string): NimverConfig =
-  let userConfig = readConfigTable(contents, path)
+proc parseConfig*(contents, path: string): Result[NimverConfig, string] =
+  let userConfig = ?readConfigTable(contents, path)
   let strategy = userConfig.getValue(WorkspaceSection, StrategyKey)
-  result = NimverConfig(
-    types: parseTypes(userConfig),
-    workspaceStrategy: strategy.map(parseWorkspaceStrategy).get(wsIndependent),
+  let config = NimverConfig(
+    types: ?parseTypes(userConfig),
+    workspaceStrategy: ?strategy.parsedOr(parseWorkspaceStrategy, wsIndependent),
     strategyWasSpecified: strategy.isSome,
-    sharedChanges: userConfig
-      .getValue(WorkspaceSection, SharedChangesKey)
-      .map(parseSharedChangesKind)
-      .get(scAll),
+    sharedChanges: ?userConfig.getValue(WorkspaceSection, SharedChangesKey).parsedOr(
+      parseSharedChangesKind, scAll
+    ),
     packages: parsePackages(userConfig),
-    unknownType: userConfig
-      .getValue(CommitsSection, UnknownTypeKey)
-      .map(parseUnknownType)
-      .flatten(),
+    unknownType: ?userConfig.getValue(CommitsSection, UnknownTypeKey).parsedOr(
+      parseUnknownType, none(BumpLevel)
+    ),
   )
-  validateWorkspaceConfig(result, path)
+  ?validateWorkspaceConfig(config, path)
+  ok(config)
 
-proc loadUserConfig*(repoRoot: string): NimverConfig =
+proc loadUserConfig*(repoRoot: string): Result[NimverConfig, string] =
   let path = configPath(repoRoot)
   if not fileAt(path):
-    raise newException(
-      IOError, "Config not found at " & path & ". Run `nimver init` first."
-    )
-  parseConfig(readFileContents(path), path)
+    return err("Config not found at " & path & ". Run `nimver init` first.")
+  parseConfig(?readFileContents(path), path)
 
 func lookupLevel(config: NimverConfig, commitType: string): Option[BumpLevel] =
   let key = commitType.toLowerAscii()

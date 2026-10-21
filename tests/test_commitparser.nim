@@ -3,13 +3,13 @@
 
 import std/[unittest]
 import commitparser
-import result
+import results
 
 suite "valid commit messages":
   test "only header, no scope, not breaking":
     let message = "feat: this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == false
     check parsed.value.scope == ""
@@ -17,7 +17,7 @@ suite "valid commit messages":
   test "only header, no scope, breaking":
     let message = "feat!: this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == true
     check parsed.value.scope == ""
@@ -25,7 +25,7 @@ suite "valid commit messages":
   test "only header, with scope, not breaking":
     let message = "feat(scope): this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == false
     check parsed.value.scope == "scope"
@@ -33,7 +33,7 @@ suite "valid commit messages":
   test "only header, with scope, breaking":
     let message = "feat(scope)!: this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == true
     check parsed.value.scope == "scope"
@@ -44,7 +44,7 @@ suite "valid commit messages":
 
     BREAKING CHANGE: foobar"""
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == true
     check parsed.value.scope == ""
@@ -55,7 +55,7 @@ suite "valid commit messages":
 
     BREAKING-CHANGE: foobar"""
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.breaking == true
     check parsed.value.scope == ""
@@ -64,37 +64,37 @@ suite "valid commit messages":
 suite "type and scope spelling":
   test "uppercase and digits in type and scope":
     let parsed = parseCommitMessage("Fix(API2): this is a test")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "Fix"
     check parsed.value.scope == "API2"
   test "a subsystem path as the type":
     let parsed = parseCommitMessage("net/http: rework the dialer")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "net/http"
     check parsed.value.scope == ""
     check parsed.value.subject == "rework the dialer"
   test "underscores and dashes":
     let parsed = parseCommitMessage("feat_x(api-v2): this is a test")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat_x"
     check parsed.value.scope == "api-v2"
   test "dots and commas in scope, but not in type":
     let parsed = parseCommitMessage("feat(web,cli.core)!: this is a test")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.scope == "web,cli.core"
     check parsed.value.breaking == true
-    check isSuccess(parseCommitMessage("fe.at: this is a test")) == false
+    check parseCommitMessage("fe.at: this is a test").isErr
   test "an at sign in a scope, but not in a type":
     # A scoped npm package is a package name here, and `bump` puts it in the
     # scope of the release commit it then asks this parser to accept.
     let parsed = parseCommitMessage("feat(@acme/widgets): this is a test")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "feat"
     check parsed.value.scope == "@acme/widgets"
-    check isSuccess(parseCommitMessage("@feat: this is a test")) == false
+    check parseCommitMessage("@feat: this is a test").isErr
   test "the subject keeps every colon after the first":
     let parsed = parseCommitMessage("docs: note: mind the gap")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "docs"
     check parsed.value.subject == "note: mind the gap"
 
@@ -107,7 +107,7 @@ suite "the Release-Note footer":
 
 Release-Note: Scopes may now contain digits, slashes and dots."""
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.subject == "tighten the scope regex"
     check parsed.value.releaseNote == "Scopes may now contain digits, slashes and dots."
 
@@ -170,7 +170,7 @@ Release-Note: the note"""
 
   test "a header that reads like the footer is still a header":
     let parsed = parseCommitMessage("release-note: mind the gap")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "release-note"
     check parsed.value.subject == "mind the gap"
     check parsed.value.releaseNote == ""
@@ -213,7 +213,7 @@ repository has to be re-initialised."""
     # `BREAKING-CHANGE` is a well-formed type, so without this the header would
     # announce a break as a side effect of being read twice.
     let parsed = parseCommitMessage("BREAKING-CHANGE: a")
-    check isSuccess(parsed) == true
+    check parsed.isOk == true
     check parsed.value.commitType == "BREAKING-CHANGE"
     check parsed.value.breaking == false
 
@@ -230,40 +230,40 @@ suite "invalid commit messages":
   test "empty message":
     let message = ""
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "invalid characters in commit type":
     let message = "fe!at!: this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "unclosed scope":
     let message = "feat(scope!: this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "empty subject":
     let message = "feat: "
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "empty scope":
     let message = "feat(): this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "wrong ! placement":
     let message = "feat!(scope): this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "no colon":
     let message = "feat(scope) this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "space in scope":
     let message = "feat(my scope): this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "space in type":
     let message = "feat ure(scope): this is a test"
     let parsed = parseCommitMessage(message)
-    check isSuccess(parsed) == false
+    check parsed.isOk == false
   test "still no parens inside a scope":
-    check isSuccess(parseCommitMessage("feat(a(b)): this is a test")) == false
+    check parseCommitMessage("feat(a(b)): this is a test").isErr
   test "still no bang inside a scope":
-    check isSuccess(parseCommitMessage("feat(sc!ope): this is a test")) == false
+    check parseCommitMessage("feat(sc!ope): this is a test").isErr

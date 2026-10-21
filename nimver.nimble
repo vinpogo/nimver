@@ -11,6 +11,7 @@ bin           = @["nimver"]
 # Dependencies
 
 requires "nim >= 2.2.12"
+requires "results >= 0.5.1"
 
 
 # Build tasks

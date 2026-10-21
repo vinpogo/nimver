@@ -2,10 +2,10 @@ import std/[algorithm, options, sequtils, strutils, tables]
 import ./changes
 import ./commitparser
 import ./config
-import ./sysio
+import ./effects
 import ./gitutils
 import ./adapters/manifest
-import ./result
+import results
 import ./semver
 import ./track
 import ./workspace
@@ -92,10 +92,10 @@ func tagVersion(naming: ReleaseNaming, tagName: string): Option[SemVer] =
   let written = naming.versionPart(tagName)
   if written.isNone():
     return none(SemVer)
-  try:
-    some(parseSemVer(written.get))
-  except ValueError:
-    none(SemVer)
+  let version = parseSemVer(written.get)
+  if version.isErr:
+    return none(SemVer)
+  some(version.value)
 
 func endsRange(
     naming: ReleaseNaming, tagName: string, boundary: VersionBoundary
@@ -134,35 +134,42 @@ func endsTheRange(
       return version
   none(SemVer)
 
-proc snapshotAt(repoRoot, revision: string, currentConfig: NimverConfig): Snapshot =
+proc snapshotAt(
+    repoRoot, revision: string, currentConfig: NimverConfig, effects: var Effects
+): Result[Snapshot, string] =
   ## How the repository stood at a commit, read from that commit's own tree.
   ##
   ## Commits made before nimver was set up - or carrying a config that no
   ## longer parses, which a release is not the place to give up over - are read
   ## under the configuration as it is now.
-  result.config = currentConfig
-  let contents = gitFileAtRevision(repoRoot, revision, ConfigRelPath)
+  var snapshot = Snapshot(config: currentConfig)
+  let contents = ?gitFileAtRevision(repoRoot, revision, ConfigRelPath)
   if contents.isSome():
-    try:
-      result.config = parseConfig(contents.get, revision & ":" & ConfigRelPath)
-    except IOError, ValueError:
-      writeError(
-        "nimver: keeping the current configuration for " & revision[0 ..< 8] & ": " &
-          getCurrentExceptionMsg()
+    let config = parseConfig(contents.get, revision & ":" & ConfigRelPath)
+    if config.isOk:
+      snapshot.config = config.value
+    else:
+      effects.add(
+        warn(
+          "nimver: keeping the current configuration for " & revision[0 ..< 8] & ": " &
+            config.error
+        )
       )
 
   var detectedManifestNames: seq[string] = @[]
-  if result.config.packages.len == 0:
-    detectedManifestNames = rootManifestNames(gitRootEntryNames(repoRoot, revision))
-  result.workspace =
-    workspaceLayout(repoRoot, result.config, detectedManifestNames, quiet = true)
-  result.foreign =
-    if result.config.packages.len == 0:
+  if snapshot.config.packages.len == 0:
+    detectedManifestNames = rootManifestNames(?gitRootEntryNames(repoRoot, revision))
+  snapshot.workspace = workspaceLayout(repoRoot, snapshot.config, detectedManifestNames)
+  snapshot.foreign =
+    if snapshot.config.packages.len == 0:
       detectedManifestNames.len == 0
     else:
-      gitPathsAtRevision(
-        repoRoot, revision, result.workspace.packages.mapIt(it.manifestRelativePath)
+      (
+        ?gitPathsAtRevision(
+          repoRoot, revision, snapshot.workspace.packages.mapIt(it.manifestRelativePath)
+        )
       ).len == 0
+  ok(snapshot)
 
 proc changesTheSetup(snapshot: Snapshot, record: CommitRecord): bool =
   ## Whether a commit is one the snapshot has to be re-read after. Reading it
@@ -181,41 +188,47 @@ proc changesTheSetup(snapshot: Snapshot, record: CommitRecord): bool =
       return true
   false
 
-proc changeFor*(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
+proc changeFor*(
+    snapshot: Snapshot, record: CommitRecord, effects: var Effects
+): Result[Option[ChangeEntry], string] =
   ## The change a commit stands for, or nothing when it is not one: an
   ## `ignore`d type, a message that is not a Conventional Commit, or a commit
   ## touching no package's files.
   let parsed = parseCommitMessage(record.message)
-  if isFailure(parsed):
+  if parsed.isErr:
     # Silent on purpose. Merges are already left out, and what is left is
     # history from before the hook was installed or from around it - not
     # something a release can do anything about.
-    return none(ChangeEntry)
+    return ok(none(ChangeEntry))
 
   let maybeLevel = validateAndLookup(snapshot.config, parsed.value)
   if isNone(maybeLevel):
-    writeError(
-      "nimver: skipping " & record.hash[0 ..< 8] & ": unknown commit type '" &
-        parsed.value.commitType & "'"
+    effects.add(
+      warn(
+        "nimver: skipping " & record.hash[0 ..< 8] & ": unknown commit type '" &
+          parsed.value.commitType & "'"
+      )
     )
-    return none(ChangeEntry)
+    return ok(none(ChangeEntry))
   if maybeLevel.get == blIgnore:
-    return none(ChangeEntry)
+    return ok(none(ChangeEntry))
 
-  let affected = affectedPackageNames(snapshot.workspace, record.changedPaths)
+  let affected = ?affectedPackageNames(snapshot.workspace, record.changedPaths)
   if affected.len == 0:
-    return none(ChangeEntry)
+    return ok(none(ChangeEntry))
 
-  some(
-    ChangeEntry(
-      commitType: parsed.value.commitType,
-      scope: parsed.value.scope,
-      bumpLevel: maybeLevel.get,
-      breaking: parsed.value.breaking,
-      affectedPackages: affected,
-      message: parsed.value.rawMessage,
-      releaseNote: parsed.value.releaseNote,
-      breakingNote: parsed.value.breakingNote,
+  ok(
+    some(
+      ChangeEntry(
+        commitType: parsed.value.commitType,
+        scope: parsed.value.scope,
+        bumpLevel: maybeLevel.get,
+        breaking: parsed.value.breaking,
+        affectedPackages: affected,
+        message: parsed.value.rawMessage,
+        releaseNote: parsed.value.releaseNote,
+        breakingNote: parsed.value.breakingNote,
+      )
     )
   )
 
@@ -225,17 +238,19 @@ type VersionRange = object
 
 proc commitsSinceLastVersion(
     repoRoot: string, naming: ReleaseNaming, boundary: VersionBoundary
-): VersionRange =
+): Result[VersionRange, string] =
   ## Newest first, stopping before the commit a version of this package went
   ## out with - which version counts as one is `boundary`'s question, and it is
   ## settled before the walk begins.
-  let tagsByCommit = gitTagsByCommit(repoRoot)
-  for record in gitCommitsIn(repoRoot, "HEAD"):
+  var versionRange: VersionRange
+  let tagsByCommit = ?gitTagsByCommit(repoRoot)
+  for record in ?gitCommitsIn(repoRoot, "HEAD"):
     let boundaryVersion = naming.endsTheRange(record, tagsByCommit, boundary)
     if boundaryVersion.isSome():
-      result.boundaryVersion = boundaryVersion
-      return
-    result.records.add(record)
+      versionRange.boundaryVersion = boundaryVersion
+      break
+    versionRange.records.add(record)
+  ok(versionRange)
 
 type PendingChanges* = object
   entries*: seq[ChangeEntry] ## Oldest first - the order a changelog reads in.
@@ -249,8 +264,9 @@ proc pendingChanges*(
     repoRoot: string,
     currentConfig: NimverConfig,
     naming: ReleaseNaming,
+    effects: var Effects,
     boundary = vbRelease,
-): PendingChanges =
+): Result[PendingChanges, string] =
   ## Every change since the last version of the package `naming` describes,
   ## oldest first - the order a changelog section reads in.
   ##
@@ -270,8 +286,7 @@ proc pendingChanges*(
   ## kind ends the range, so a prerelease lists only what is new since the one
   ## before it. Off one, only a release does, so prerelease tags are passed over
   ## and the release covers the whole cycle.
-  let versionRange = commitsSinceLastVersion(repoRoot, naming, boundary)
-  result.boundaryVersion = versionRange.boundaryVersion
+  let versionRange = ?commitsSinceLastVersion(repoRoot, naming, boundary)
 
   var newestFirst: seq[ChangeEntry] = @[]
   var snapshot: Snapshot
@@ -281,16 +296,22 @@ proc pendingChanges*(
   var snapshotHoldsFor = ""
   for record in versionRange.records:
     if record.hash != snapshotHoldsFor:
-      snapshot = snapshotAt(repoRoot, record.hash, currentConfig)
+      snapshot = ?snapshotAt(repoRoot, record.hash, currentConfig, effects)
     if not snapshot.foreign:
-      let change = snapshot.changeFor(record)
+      let change = ?snapshot.changeFor(record, effects)
       if change.isSome():
         newestFirst.add(change.get())
     snapshotHoldsFor = if snapshot.changesTheSetup(record): "" else: record.parentHash
 
-  result.entries = newestFirst.reversed()
+  ok(
+    PendingChanges(
+      entries: newestFirst.reversed(), boundaryVersion: versionRange.boundaryVersion
+    )
+  )
 
-proc nextIteration*(repoRoot: string, naming: ReleaseNaming, core: SemVer): int =
+proc nextIteration*(
+    repoRoot: string, naming: ReleaseNaming, core: SemVer
+): Result[int, string] =
   ## One past the highest iteration this package has already cut on this track
   ## at this core version.
   ##
@@ -299,11 +320,12 @@ proc nextIteration*(repoRoot: string, naming: ReleaseNaming, core: SemVer): int 
   ## would fail after the release commit was made, leaving a moved manifest
   ## behind an untagged commit. Both prefixes count, so numbering stays
   ## continuous across a workspace shape change.
-  result = 1
-  for _, tagNames in gitTagsByCommit(repoRoot):
+  var iteration = 1
+  for _, tagNames in ?gitTagsByCommit(repoRoot):
     for tagName in tagNames:
       let version = naming.tagVersion(tagName)
       if version.isNone():
         continue
       if version.get.track == naming.track.name and version.get.core == core:
-        result = max(result, version.get.iteration + 1)
+        iteration = max(iteration, version.get.iteration + 1)
+  ok(iteration)

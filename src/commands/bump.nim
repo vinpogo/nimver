@@ -1,6 +1,8 @@
 import std/[algorithm, options, sequtils]
+import results
 import ../config
 import ../sysio
+import ../effects
 import ../adapters/manifest
 import ../changelog
 import ../semver
@@ -16,40 +18,47 @@ proc plannedReleases(
     requestedPackageName: Option[string],
     tracks: TrackSelection,
     promoteToStable: bool,
-): seq[PackageRelease] =
+    effects: var Effects,
+): Result[seq[PackageRelease], string] =
   ## Every release the strategy would consider, releasable or not, so that
   ## having nothing to bump can still be reported in the caller's terms.
   case projectWorkspace.strategy
   of wsFixed:
     if requestedPackageName.isSome:
-      raise newException(
-        IOError,
-        "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent.",
+      return err(
+        "workspace strategy is 'fixed', so `nimver bump` releases every package at once. Drop the package argument, or set strategy = independent."
       )
     # One version across every manifest, so one track: the repository-wide one.
-    @[
-      planFixedRelease(
-        repoRoot, projectWorkspace, currentConfig, tracks.default, promoteToStable
-      )
-    ]
+    ok(
+      @[
+        ?planFixedRelease(
+          repoRoot, projectWorkspace, currentConfig, effects, tracks.default,
+          promoteToStable,
+        )
+      ]
+    )
   of wsIndependent:
     # A bare `bump` releases everything that has pending changes; naming a
     # package narrows the release to that one.
     let candidates =
       if requestedPackageName.isSome:
-        @[projectWorkspace.findPackage(requestedPackageName.get)]
+        @[?projectWorkspace.findPackage(requestedPackageName.get)]
       else:
         projectWorkspace.packages
-    candidates.mapIt(
-      planRelease(
-        repoRoot,
-        projectWorkspace,
-        currentConfig,
-        it,
-        tracks.trackFor(it.name),
-        promoteToStable,
+    var planned: seq[PackageRelease] = @[]
+    for candidate in candidates:
+      planned.add(
+        ?planRelease(
+          repoRoot,
+          projectWorkspace,
+          currentConfig,
+          candidate,
+          effects,
+          tracks.trackFor(candidate.name),
+          promoteToStable,
+        )
       )
-    )
+    ok(planned)
 
 proc nothingToBumpReason(planned: seq[PackageRelease]): string =
   if planned.anyIt(it.hasPendingChanges()):
@@ -61,30 +70,31 @@ proc nothingToBumpReason(planned: seq[PackageRelease]): string =
   else:
     "No changes since the last release."
 
-proc reportPlanned(projectWorkspace: Workspace, releases: seq[PackageRelease]) =
+proc reportPlanned(
+    projectWorkspace: Workspace, releases: seq[PackageRelease]
+): Effects =
   for release in releases:
-    echo "Bumping ",
-      releaseLabelFor(projectWorkspace, release),
-      ": ",
-      $release.current,
-      " -> ",
-      $release.next,
-      " (",
-      release.bumpReason(),
-      ")"
+    result.add(
+      say(
+        "Bumping " & releaseLabelFor(projectWorkspace, release) & ": " & $release.current &
+          " -> " & $release.next & " (" & release.bumpReason() & ")"
+      )
+    )
 
-proc reportDryRun(releases: seq[PackageRelease]) =
+proc reportDryRun(releases: seq[PackageRelease]): Effects =
   for release in releases:
     let releaseLabel =
       if releases.len > 1:
         " for " & release.name
       else:
         ""
-    echo "\nWould tag ", release.tag
-    echo "--- CHANGELOG entry", releaseLabel, " (dry run, nothing written) ---"
-    echo release.section
+    result.add(say("\nWould tag " & release.tag))
+    result.add(
+      say("--- CHANGELOG entry" & releaseLabel & " (dry run, nothing written) ---")
+    )
+    result.add(say(release.section))
 
-proc warnAboutTracks(tracks: TrackSelection, projectWorkspace: Workspace) =
+proc warnAboutTracks(tracks: TrackSelection, projectWorkspace: Workspace): Effects =
   ## Said before anything is planned, so it is there whether the run goes on to
   ## release, to find nothing to bump, or to refuse for want of a release to
   ## build on.
@@ -104,68 +114,91 @@ proc warnAboutTracks(tracks: TrackSelection, projectWorkspace: Workspace) =
   let onDefault =
     projectWorkspace.packages.allIt(tracks.trackFor(it.name) == tracks.default)
   if onDefault and tracks.default.hasTrack():
-    writeError(
-      "nimver: releasing on track '" & tracks.default.name & "'." &
-        advice(tracks.default)
-    )
-    return
+    return @[
+      warn(
+        "nimver: releasing on track '" & tracks.default.name & "'." &
+          advice(tracks.default)
+      )
+    ]
 
   for package in projectWorkspace.packages:
     let track = tracks.trackFor(package.name)
     if track.hasTrack():
-      writeError(
-        "nimver: releasing " & package.name & " on track '" & track.name & "'." &
-          advice(track)
+      result.add(
+        warn(
+          "nimver: releasing " & package.name & " on track '" & track.name & "'." &
+            advice(track)
+        )
       )
 
-proc checkTagsAreFree(repoRoot: string, releases: seq[PackageRelease]) =
-  ## Before a line of it is written. `applyReleases` tags last, so a name `git
+proc checkTagsAreFree(
+    repoRoot: string, releases: seq[PackageRelease]
+): Result[void, string] =
+  ## Before a line of it is written. `releaseEffects` tags last, so a name `git
   ## tag` already knows would fail after the manifests were moved and the
   ## release commit made, leaving the two out of step.
   for release in releases:
-    if tagExists(repoRoot, release.tag):
-      raise newException(
-        IOError,
+    if ?tagExists(repoRoot, release.tag):
+      return err(
         "tag " & release.tag &
-          " already exists. Delete it, or release from a branch that has not used it.",
+          " already exists. Delete it, or release from a branch that has not used it."
       )
+  ok()
 
-proc applyReleases(
+proc releaseEffects(
     repoRoot: string, projectWorkspace: Workspace, releases: seq[PackageRelease]
-) =
-  let changelogs = changelogWrites(releases)
+): Result[Effects, string] =
+  ## Every file's new contents are worked out before anything is queued, so a
+  ## manifest that cannot be rewritten fails the run before it changes anything.
+  var manifestWrites: seq[(ProjectManifest, string)] = @[]
   for release in releases:
     for manifest in release.manifests:
-      writeVersion(manifest, release.next)
-      echo "Updated ", manifest.filePath, " (", manifest.displayName(), ")"
-  for changelog in changelogs:
-    prependToChangelog(changelog.path, changelog.text)
-    echo "Updated ", changelog.path
+      manifestWrites.add((manifest, ?versionWritten(manifest, release.next)))
+  var changelogContents: seq[(string, string)] = @[]
+  for changelog in changelogWrites(releases):
+    let existing =
+      if fileAt(changelog.path):
+        some(?readFileContents(changelog.path))
+      else:
+        none(string)
+    changelogContents.add((changelog.path, withSection(existing, changelog.text)))
+
+  var effects: Effects = @[]
+  for (manifest, contents) in manifestWrites:
+    effects.add(writeTo(manifest.filePath, contents))
+    effects.add(
+      say("Updated " & manifest.filePath & " (" & manifest.displayName() & ")")
+    )
+  for (path, contents) in changelogContents:
+    effects.add(writeTo(path, contents))
+    effects.add(say("Updated " & path))
+
+  for (manifest, _) in manifestWrites:
+    effects.add(stage(repoRoot, manifest.filePath))
+  for (path, _) in changelogContents:
+    effects.add(stage(repoRoot, path))
+  effects.add(commit(repoRoot, releaseCommitSubject(projectWorkspace, releases)))
+  effects.add(say("Created release commit."))
 
   for release in releases:
-    for manifest in release.manifests:
-      gitAdd(repoRoot, manifest.filePath)
-  for changelog in changelogs:
-    gitAdd(repoRoot, changelog.path)
-  gitCommit(repoRoot, releaseCommitSubject(projectWorkspace, releases))
-  echo "Created release commit."
-
-  for release in releases:
-    gitTag(repoRoot, release.tag)
-    echo "Created tag " & release.tag
+    effects.add(tag(repoRoot, release.tag))
+    effects.add(say("Created tag " & release.tag))
+  ok(effects)
 
 proc cmdBump*(
     repoRoot: string,
     requestedPackageName: Option[string],
     dryRun: bool,
     promoteToStable: bool,
-) =
-  let config = loadUserConfig(repoRoot)
-  let tracks = readTracks(repoRoot)
-  let projectWorkspace = loadWorkspace(repoRoot, config)
-  warnAboutTracks(tracks, projectWorkspace)
-  let planned = plannedReleases(
-    repoRoot, projectWorkspace, config, requestedPackageName, tracks, promoteToStable
+    effects: var Effects,
+): Result[void, string] =
+  let config = ?loadUserConfig(repoRoot)
+  let tracks = ?readTracks(repoRoot)
+  let projectWorkspace = ?loadWorkspace(repoRoot, config, effects)
+  effects.add(warnAboutTracks(tracks, projectWorkspace))
+  let planned = ?plannedReleases(
+    repoRoot, projectWorkspace, config, requestedPackageName, tracks, promoteToStable,
+    effects,
   )
 
   # One order for everything a run emits - changelog sections, progress lines,
@@ -173,12 +206,13 @@ proc cmdBump*(
   # same way every time, whatever order the config declares them in.
   let releases = planned.filterIt(it.isReleasable()).sortedByIt(it.name)
   if releases.len == 0:
-    echo nothingToBumpReason(planned), " Nothing to bump."
-    return
+    effects.add(say(nothingToBumpReason(planned) & " Nothing to bump."))
+    return ok()
 
-  reportPlanned(projectWorkspace, releases)
+  effects.add(reportPlanned(projectWorkspace, releases))
   if dryRun:
-    reportDryRun(releases)
-    return
-  checkTagsAreFree(repoRoot, releases)
-  applyReleases(repoRoot, projectWorkspace, releases)
+    effects.add(reportDryRun(releases))
+    return ok()
+  ?checkTagsAreFree(repoRoot, releases)
+  effects.add(?releaseEffects(repoRoot, projectWorkspace, releases))
+  ok()

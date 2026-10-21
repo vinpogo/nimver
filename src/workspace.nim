@@ -1,5 +1,7 @@
-import std/[sets, strutils, tables, options]
+import std/[sets, strutils, sequtils, tables, options]
 import ./sysio
+import results
+import ./effects
 import ./changes
 import ./config
 import ./track
@@ -20,6 +22,9 @@ type
     strategy*: WorkspaceStrategy
     sharedChanges*: SharedChangesKind
     packages*: seq[WorkspacePackage]
+    notice*: string
+      ## Advice about detected siblings, worth saying once about the working
+      ## tree and never about each commit behind it; empty when there is none.
 
 proc normalizeRepoPath(path: string): string =
   result = path.replace('\\', '/')
@@ -95,10 +100,7 @@ proc packageNames*(workspace: Workspace): seq[string] =
     result.add(package.name)
 
 proc workspaceLayout*(
-    repoRoot: string,
-    config: NimverConfig,
-    detectedManifestNames: seq[string],
-    quiet = false,
+    repoRoot: string, config: NimverConfig, detectedManifestNames: seq[string]
 ): Workspace =
   ## The packages a configuration describes, and how changed files map onto
   ## them. `detectedManifestNames` supplies the repository root's manifests for
@@ -111,8 +113,6 @@ proc workspaceLayout*(
   ## long gone. Only a package actually being released is read from disk.
   ## Nothing configured and nothing detected lays out no packages at all,
   ## which is what a commit merged in from another repository looks like.
-  ## `quiet` silences the advice about detected siblings, which is worth saying
-  ## once about the working tree and never about each commit behind it.
   result =
     Workspace(strategy: config.workspaceStrategy, sharedChanges: config.sharedChanges)
 
@@ -141,20 +141,17 @@ proc workspaceLayout*(
       # that says nothing is advised about the choice: one that names its
       # strategy is not being guessed at.
       if config.strategyWasSpecified and config.workspaceStrategy == wsIndependent:
-        if not quiet:
-          writeError(
-            "nimver: found " & $detectedManifestNames.len &
-              " manifests in the repository root (" & result.packageNames().join(", ") &
-              "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
-          )
+        result.notice =
+          "nimver: found " & $detectedManifestNames.len &
+          " manifests in the repository root (" & result.packageNames().join(", ") &
+          "); releasing them independently. They share a directory, so every change follows sharedChanges. Declare them under [workspace] in .nimver/config.ini with sourceFiles to attribute changes per package."
       else:
         result.strategy = wsFixed
-        if not quiet and not config.strategyWasSpecified:
-          writeError(
+        if not config.strategyWasSpecified:
+          result.notice =
             "nimver: found " & $detectedManifestNames.len &
-              " manifests in the repository root (" & result.packageNames().join(", ") &
-              "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
-          )
+            " manifests in the repository root (" & result.packageNames().join(", ") &
+            "); assuming strategy = fixed. Declare them under [workspace] in .nimver/config.ini to silence this."
     return
 
   for packageConfig in config.packages:
@@ -168,32 +165,37 @@ proc workspaceLayout*(
       )
     )
 
-proc loadWorkspace*(repoRoot: string, config: NimverConfig): Workspace =
+proc loadWorkspace*(
+    repoRoot: string, config: NimverConfig, effects: var Effects
+): Result[Workspace, string] =
   ## The workspace as the working tree has it, which is the one a release acts
   ## on: every manifest it names has to be there to be read and rewritten.
   var detectedManifestNames: seq[string] = @[]
-  for detectedManifest in findRootManifests(repoRoot):
+  for detectedManifest in ?findRootManifests(repoRoot):
     detectedManifestNames.add(
       normalizeRepoPath(relativePath(detectedManifest.filePath, repoRoot))
     )
   if config.packages.len == 0 and detectedManifestNames.len == 0:
-    raise newException(
-      IOError,
-      "No supported project manifest found. Expected a .nimble file or package.json.",
+    return err(
+      "No supported project manifest found. Expected a .nimble file or package.json."
     )
 
-  result = workspaceLayout(repoRoot, config, detectedManifestNames)
-  for package in result.packages:
-    discard manifestFromPath(package.manifest.filePath)
+  let workspace = workspaceLayout(repoRoot, config, detectedManifestNames)
+  if workspace.notice.len > 0:
+    effects.add(warn(workspace.notice))
+  for package in workspace.packages:
+    discard ?manifestFromPath(package.manifest.filePath)
+  ok(workspace)
 
-proc findPackage*(workspace: Workspace, name: string): WorkspacePackage =
+proc findPackage*(
+    workspace: Workspace, name: string
+): Result[WorkspacePackage, string] =
   for package in workspace.packages:
     if package.name == name:
-      return package
-  raise newException(
-    IOError,
+      return ok(package)
+  err(
     "Unknown package '" & name & "'. Configured packages: " &
-      workspace.packageNames().join(", "),
+      workspace.packageNames().join(", ")
   )
 
 proc containsPath(packageRootDirectory, changedPath: string): bool =
@@ -220,7 +222,9 @@ proc nearestPackageIndex(workspace: Workspace, changedPath: string): int =
   if tied:
     result = -1
 
-proc owningPackageIndex(workspace: Workspace, changedPath: string): int =
+proc owningPackageIndex(
+    workspace: Workspace, changedPath: string
+): Result[int, string] =
   ## Explicit `sourceFiles` win, then the manifest itself, then the nearest
   ## ancestor. Returns -1 for a file no package claims.
   var matchingPackageIndexes: seq[int] = @[]
@@ -235,23 +239,22 @@ proc owningPackageIndex(workspace: Workspace, changedPath: string): int =
     var matchingPackageNames: seq[string] = @[]
     for packageIndex in matchingPackageIndexes:
       matchingPackageNames.add(workspace.packages[packageIndex].name)
-    raise newException(
-      IOError,
+    return err(
       "Changed path '" & changedPath & "' matches the sourceFiles of " &
-        matchingPackageNames.join(" and ") & ". Patterns must not overlap.",
+        matchingPackageNames.join(" and ") & ". Patterns must not overlap."
     )
   if matchingPackageIndexes.len == 1:
-    return matchingPackageIndexes[0]
+    return ok(matchingPackageIndexes[0])
 
   for packageIndex, package in workspace.packages:
     if changedPath == package.manifestRelativePath:
-      return packageIndex
+      return ok(packageIndex)
 
-  workspace.nearestPackageIndex(changedPath)
+  ok(workspace.nearestPackageIndex(changedPath))
 
 proc affectedPackageNames*(
     workspace: Workspace, changedPaths: seq[string]
-): seq[string] =
+): Result[seq[string], string] =
   var affectedPackageNames = initHashSet[string]()
 
   for rawChangedPath in changedPaths:
@@ -262,7 +265,7 @@ proc affectedPackageNames*(
     if changedPath.startsWith(ChangesRelPrefix) or changedPath == TrackRelPath:
       continue
 
-    let owningIndex = workspace.owningPackageIndex(changedPath)
+    let owningIndex = ?workspace.owningPackageIndex(changedPath)
     if owningIndex >= 0:
       affectedPackageNames.incl(workspace.packages[owningIndex].name)
     else:
@@ -273,6 +276,4 @@ proc affectedPackageNames*(
       of scNone:
         discard
 
-  for package in workspace.packages:
-    if package.name in affectedPackageNames:
-      result.add(package.name)
+  ok(workspace.packages.filterIt(it.name in affectedPackageNames).mapIt(it.name))

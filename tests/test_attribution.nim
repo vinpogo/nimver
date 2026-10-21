@@ -1,6 +1,7 @@
 import std/[unittest, options]
 import workspace
 import config
+import results
 import ./builders
 
 suite "glob matching":
@@ -45,30 +46,30 @@ suite "attributing a changed file":
   ]
 
   test "a file inside a package belongs to it alone":
-    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]).value ==
       @["web"]
 
   test "a package's own manifest belongs to it":
-    check testWorkspace(packages).affectedPackageNames(@["packages/cli/cli.nimble"]) ==
-      @["cli"]
+    check testWorkspace(packages)
+      .affectedPackageNames(@["packages/cli/cli.nimble"]).value == @["cli"]
 
   test "one commit can touch several packages":
-    check testWorkspace(packages).affectedPackageNames(
-      @["packages/web/index.js", "packages/cli/src/main.nim"]
-    ) == @["web", "cli"]
+    check testWorkspace(packages)
+      .affectedPackageNames(@["packages/web/index.js", "packages/cli/src/main.nim"]).value ==
+      @["web", "cli"]
 
   test "packages are reported in workspace order, not in the order touched":
-    check testWorkspace(packages).affectedPackageNames(
-      @["packages/cli/src/main.nim", "packages/web/index.js"]
-    ) == @["web", "cli"]
+    check testWorkspace(packages)
+      .affectedPackageNames(@["packages/cli/src/main.nim", "packages/web/index.js"]).value ==
+      @["web", "cli"]
 
   test "a package touched twice is reported once":
-    check testWorkspace(packages).affectedPackageNames(
-      @["packages/web/index.js", "packages/web/README.md"]
-    ) == @["web"]
+    check testWorkspace(packages)
+      .affectedPackageNames(@["packages/web/index.js", "packages/web/README.md"]).value ==
+      @["web"]
 
   test "no changed files affect nothing":
-    check testWorkspace(packages).affectedPackageNames(@[]).len == 0
+    check testWorkspace(packages).affectedPackageNames(@[]).value.len == 0
 
 suite "files no package claims":
   let packages = @[
@@ -77,40 +78,40 @@ suite "files no package claims":
   ]
 
   test "sharedChanges = all hands the file to every package":
-    check testWorkspace(packages).affectedPackageNames(@["README.md"]) == @[
-      "web", "cli"
-    ]
+    check testWorkspace(packages).affectedPackageNames(@["README.md"]).value ==
+      @["web", "cli"]
 
   test "sharedChanges = none drops the file":
     check testWorkspace(packages, sharedChanges = scNone)
-      .affectedPackageNames(@["README.md"]).len == 0
+      .affectedPackageNames(@["README.md"]).value.len == 0
 
   test "the old per-change bookkeeping directory is skipped rather than shared":
     check testWorkspace(packages)
-      .affectedPackageNames(@[".nimver/changes/abc123.txt"]).len == 0
+      .affectedPackageNames(@[".nimver/changes/abc123.txt"]).value.len == 0
 
   test "the track file is skipped rather than shared":
     # Counted, entering a track would mark every package affected and put a
     # line in every changelog.
-    check testWorkspace(packages).affectedPackageNames(@[".nimver/track"]).len == 0
+    check testWorkspace(packages).affectedPackageNames(@[".nimver/track"]).value.len == 0
 
   test "the config itself is a shared change":
-    check testWorkspace(packages).affectedPackageNames(@[".nimver/config.ini"]) ==
+    check testWorkspace(packages).affectedPackageNames(@[".nimver/config.ini"]).value ==
       @["web", "cli"]
 
   test "packages sharing a directory tie for nearest, so sharedChanges decides":
     let siblings =
       @[testPackage("web", "package.json"), testPackage("cli", "cli.nimble")]
-    check siblings.testWorkspace().affectedPackageNames(@["src/main.nim"]) ==
+    check siblings.testWorkspace().affectedPackageNames(@["src/main.nim"]).value ==
       @["web", "cli"]
     check siblings
       .testWorkspace(sharedChanges = scNone)
-      .affectedPackageNames(@["src/main.nim"]).len == 0
+      .affectedPackageNames(@["src/main.nim"]).value.len == 0
 
   test "a sibling's own manifest still belongs to it":
     let siblings =
       @[testPackage("web", "package.json"), testPackage("cli", "cli.nimble")]
-    check siblings.testWorkspace().affectedPackageNames(@["cli.nimble"]) == @["cli"]
+    check siblings.testWorkspace().affectedPackageNames(@["cli.nimble"]).value ==
+      @["cli"]
 
 suite "nested packages":
   let packages = @[
@@ -118,18 +119,16 @@ suite "nested packages":
   ]
 
   test "the nearest manifest wins over an ancestor's":
-    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]) ==
+    check testWorkspace(packages).affectedPackageNames(@["packages/web/index.js"]).value ==
       @["web"]
 
   test "a file outside every nested package falls to the ancestor":
-    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
-      @["src/main.nim"]
-    ) == @["root"]
+    check testWorkspace(packages, sharedChanges = scNone)
+      .affectedPackageNames(@["src/main.nim"]).value == @["root"]
 
   test "a package at the repo root claims files no nested package holds":
-    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
-      @["README.md"]
-    ) == @["root"]
+    check testWorkspace(packages, sharedChanges = scNone)
+      .affectedPackageNames(@["README.md"]).value == @["root"]
 
 suite "explicit sourceFiles":
   test "a pattern claims a file outside the package's own directory":
@@ -139,34 +138,31 @@ suite "explicit sourceFiles":
       ),
       testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
-      @["docs/guide.md"]
-    ) == @["web"]
+    check testWorkspace(packages, sharedChanges = scNone)
+      .affectedPackageNames(@["docs/guide.md"]).value == @["web"]
 
   test "a pattern wins over another package's nearest-ancestor claim":
     let packages = @[
       testPackage("web", "packages/web/package.json", some(@["packages/**"])),
       testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check testWorkspace(packages).affectedPackageNames(@["packages/cli/src/main.nim"]) ==
-      @["web"]
+    check testWorkspace(packages)
+      .affectedPackageNames(@["packages/cli/src/main.nim"]).value == @["web"]
 
   test "a file matching no pattern still falls back to nearest ancestor":
     let packages = @[
       testPackage("web", "packages/web/package.json", some(@["docs/**"])),
       testPackage("cli", "packages/cli/cli.nimble"),
     ]
-    check testWorkspace(packages, sharedChanges = scNone).affectedPackageNames(
-      @["packages/web/index.js"]
-    ) == @["web"]
+    check testWorkspace(packages, sharedChanges = scNone)
+      .affectedPackageNames(@["packages/web/index.js"]).value == @["web"]
 
   test "overlapping patterns are rejected rather than picking a winner":
     let packages = @[
       testPackage("web", "packages/web/package.json", some(@["shared/**"])),
       testPackage("cli", "packages/cli/cli.nimble", some(@["shared/**"])),
     ]
-    expect IOError:
-      discard testWorkspace(packages).affectedPackageNames(@["shared/util.js"])
+    check testWorkspace(packages).affectedPackageNames(@["shared/util.js"]).isErr
 
 suite "looking up a package":
   let projectWorkspace = testWorkspace(
@@ -180,12 +176,11 @@ suite "looking up a package":
     check projectWorkspace.packageNames() == @["web", "cli"]
 
   test "a package is found by name":
-    check projectWorkspace.findPackage("cli").manifestRelativePath ==
+    check projectWorkspace.findPackage("cli").value.manifestRelativePath ==
       "packages/cli/cli.nimble"
 
   test "an unknown name is rejected, listing what there is":
-    expect IOError:
-      discard projectWorkspace.findPackage("api")
+    check projectWorkspace.findPackage("api").isErr
 
 suite "layout from detected manifests":
   ## What the workspace looks like when the config declares no packages, so the
@@ -193,36 +188,32 @@ suite "layout from detected manifests":
   let emptyConfig = NimverConfig()
 
   test "a lone nimble file names its package after the file":
-    let layout = workspaceLayout("/repo", emptyConfig, @["cli.nimble"], quiet = true)
+    let layout = workspaceLayout("/repo", emptyConfig, @["cli.nimble"])
     check layout.packageNames() == @["cli"]
     check layout.packages[0].rootDirectory.len == 0
 
   test "a lone package.json is named root, since its filename says nothing":
-    check workspaceLayout("/repo", emptyConfig, @["package.json"], quiet = true)
-      .packageNames() == @["root"]
+    check workspaceLayout("/repo", emptyConfig, @["package.json"]).packageNames() ==
+      @["root"]
 
   test "detected siblings keep their filenames as names":
-    check workspaceLayout(
-      "/repo", emptyConfig, @["cli.nimble", "package.json"], quiet = true
-    )
+    check workspaceLayout("/repo", emptyConfig, @["cli.nimble", "package.json"])
       .packageNames() == @["cli.nimble", "package.json"]
 
   test "detected siblings are released together unless asked otherwise":
-    check workspaceLayout(
-      "/repo", emptyConfig, @["cli.nimble", "package.json"], quiet = true
-    ).strategy == wsFixed
+    check workspaceLayout("/repo", emptyConfig, @["cli.nimble", "package.json"]).strategy ==
+      wsFixed
 
   test "an explicit independent strategy is honoured for detected siblings":
     let independent =
       NimverConfig(strategyWasSpecified: true, workspaceStrategy: wsIndependent)
-    check workspaceLayout(
-      "/repo", independent, @["cli.nimble", "package.json"], quiet = true
-    ).strategy == wsIndependent
+    check workspaceLayout("/repo", independent, @["cli.nimble", "package.json"]).strategy ==
+      wsIndependent
 
   test "a tree with no manifest at its root lays out no packages":
     # A commit merged in from another repository looks like this. Only a
     # working tree without one is a mistake, and `loadWorkspace` says so.
-    check workspaceLayout("/repo", emptyConfig, @[], quiet = true).packages.len == 0
+    check workspaceLayout("/repo", emptyConfig, @[]).packages.len == 0
 
   test "declared packages are used as given, ignoring what was detected":
     let declared = NimverConfig(
@@ -231,7 +222,7 @@ suite "layout from detected manifests":
         PackageConfig(name: "cli", manifestPath: "packages/cli/cli.nimble"),
       ]
     )
-    let layout = workspaceLayout("/repo", declared, @["stray.nimble"], quiet = true)
+    let layout = workspaceLayout("/repo", declared, @["stray.nimble"])
     check layout.packageNames() == @["web", "cli"]
     check layout.packages[0].manifestRelativePath == "packages/web/package.json"
     check layout.packages[0].rootDirectory == "packages/web"

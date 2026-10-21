@@ -1,4 +1,6 @@
+import ../effects
+
 const NimblePkgVersion {.strdefine.} = "unknown"
 
-proc cmdVersion*() =
-  echo NimblePkgVersion
+proc cmdVersion*(): Effects =
+  @[say(NimblePkgVersion)]

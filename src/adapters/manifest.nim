@@ -2,6 +2,7 @@
 ## the corresponding ecosystem adapter.
 
 import std/[algorithm, strutils, sequtils]
+import results
 import ../sysio
 import ./nimble
 import ./packagejson
@@ -21,15 +22,15 @@ proc displayName*(manifest: ProjectManifest): string =
   of mkNimble: "Nimble"
   of mkPackageJson: "package.json"
 
-proc manifestFromPath*(filePath: string): ProjectManifest =
+proc manifestFromPath*(filePath: string): Result[ProjectManifest, string] =
   if not fileAt(filePath):
-    raise newException(IOError, "Manifest not found at " & filePath)
+    return err("Manifest not found at " & filePath)
   if filePath.endsWith(".nimble"):
-    ProjectManifest(manifestKind: mkNimble, filePath: filePath)
+    ok(ProjectManifest(manifestKind: mkNimble, filePath: filePath))
   elif filePath.extractFilename() == "package.json":
-    ProjectManifest(manifestKind: mkPackageJson, filePath: filePath)
+    ok(ProjectManifest(manifestKind: mkPackageJson, filePath: filePath))
   else:
-    raise newException(IOError, "Unsupported project manifest: " & filePath)
+    err("Unsupported project manifest: " & filePath)
 
 proc rootManifestNames*(entryNames: seq[string]): seq[string] =
   ## The supported manifests among the names of a repository root's entries, in
@@ -54,25 +55,27 @@ proc manifestAt*(filePath: string): ProjectManifest =
   else:
     ProjectManifest(manifestKind: mkPackageJson, filePath: filePath)
 
-proc findRootManifests*(repoRoot: string): seq[ProjectManifest] =
+proc findRootManifests*(repoRoot: string): Result[seq[ProjectManifest], string] =
   ## Every supported manifest sitting directly in the repository root, in a
   ## stable order. More than one means the repository versions several packages
   ## from the same directory, which the caller has to make sense of.
-  let entryNames = filesIn(repoRoot).mapIt(it.extractFilename())
+  let entryNames = (?filesIn(repoRoot)).mapIt(it.extractFilename())
+  ok(rootManifestNames(entryNames).mapIt(manifestAt(repoRoot / it)))
 
-  for manifestName in rootManifestNames(entryNames):
-    result.add(manifestAt(repoRoot / manifestName))
-
-proc readVersion*(manifest: ProjectManifest): SemVer =
+proc readVersion*(manifest: ProjectManifest): Result[SemVer, string] =
   case manifest.manifestKind
   of mkNimble:
     nimble.readVersion(manifest.filePath)
   of mkPackageJson:
     readPackageVersion(manifest.filePath)
 
-proc writeVersion*(manifest: ProjectManifest, newVersion: SemVer) =
+proc versionWritten*(
+    manifest: ProjectManifest, newVersion: SemVer
+): Result[string, string] =
+  ## The manifest's contents with `newVersion` written in, everything else left
+  ## as it was.
   case manifest.manifestKind
   of mkNimble:
-    nimble.writeVersion(manifest.filePath, newVersion)
+    nimble.versionWritten(manifest.filePath, newVersion)
   of mkPackageJson:
-    writePackageVersion(manifest.filePath, newVersion)
+    packageVersionWritten(manifest.filePath, newVersion)

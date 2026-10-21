@@ -9,6 +9,7 @@
 ## thing rather than saying so.
 
 import std/[editdistance, parsecfg, sequtils, streams, strutils, tables]
+import results
 
 const
   TypesSection* = "types"
@@ -85,12 +86,12 @@ func normalized(contents: string): string =
   # Split on `\n` rather than by lines: a `\r` stays where it was.
   contents.split('\n').mapIt(it.quotedSectionHeader().quotedEmptyValue()).join("\n")
 
-proc loadConfigTable(contents, path: string): Config =
-  ## `std/parsecfg`'s own `loadConfig`, except that a parse error is raised
-  ## rather than answered by returning everything up to it, and a section with
+proc loadConfigTable(contents, path: string): Result[Config, string] =
+  ## `std/parsecfg`'s own `loadConfig`, except that a parse error fails the read
+  ## rather than being answered with everything up to it, and a section with
   ## no keys is kept rather than dropped - an empty `[package.web]` is a
   ## package missing its manifest, not a package nobody wrote down.
-  result = newConfig()
+  var table = newConfig()
   var parser: CfgParser
   parser.open(newStringStream(contents), path)
   defer:
@@ -104,16 +105,17 @@ proc loadConfigTable(contents, path: string): Config =
       break
     of cfgSectionStart:
       section = event.section
-      if not result.hasKey(section):
-        result[section] = newOrderedTable[string, string]()
+      if not table.hasKey(section):
+        table[section] = newOrderedTable[string, string]()
     of cfgKeyValuePair:
-      result.mgetOrPut(section, newOrderedTable[string, string]())[event.key] =
+      table.mgetOrPut(section, newOrderedTable[string, string]())[event.key] =
         event.value
     of cfgOption:
-      result.mgetOrPut(section, newOrderedTable[string, string]())["--" & event.key] =
+      table.mgetOrPut(section, newOrderedTable[string, string]())["--" & event.key] =
         event.value
     of cfgError:
-      raise newException(IOError, "Could not read " & path & ": " & event.msg)
+      return err("Could not read " & path & ": " & event.msg)
+  ok(table)
 
 func closestSpelling(unknown: string, candidates: openArray[string]): string =
   ## The nearest known spelling, when one is near enough to be worth naming:
@@ -143,62 +145,61 @@ func knownKeys(section: string): seq[string] =
   else:
     NoKeys # `[types]`, whose keys are the commit types the repository uses.
 
-proc checkUnquotedGlobs(userConfig: Config, path: string) =
+proc checkUnquotedGlobs(userConfig: Config, path: string): Result[void, string] =
   ## Checked before anything else about a key: an unquoted `*` in a *value*
   ## lexes into a key of its own, and "unknown key `*`" would be a riddle.
   for _, keys in userConfig.pairs():
     for key in keys.keys():
       if '*' in key:
-        raise newException(
-          IOError,
+        return err(
           "Unquoted `*` in " & path &
-            ": a value containing `*` has to be quoted, as in sourceFiles = \"packages/web/**, docs/**\"",
+            ": a value containing `*` has to be quoted, as in sourceFiles = \"packages/web/**, docs/**\""
         )
+  ok()
 
 proc checkSection(
     section: string, keys: OrderedTableRef[string, string], path: string
-) =
+): Result[void, string] =
   if section.len == 0:
     if keys.len > 0:
-      raise newException(
-        IOError,
+      return err(
         "Setting '" & toSeq(keys.keys())[0] & "' before any section in " & path &
-          ". Every setting belongs under a section, as in [workspace].",
+          ". Every setting belongs under a section, as in [workspace]."
       )
-    return
+    return ok()
 
   if section notin FixedSections and not section.startsWith(PackagePrefix):
     let suggested = suggestedSection(section)
-    raise newException(
-      IOError,
+    return err(
       "Unknown section [" & section & "] in " & path & (
         if suggested.len > 0:
           ", did you mean [" & suggested & "]?"
         else:
           ". Known sections are [types], [workspace], [commits] and [package.<name>]."
-      ),
+      )
     )
 
   let allowed = knownKeys(section)
   if allowed.len == 0:
-    return
+    return ok()
   for key in keys.keys():
     if key notin allowed:
       let suggested = closestSpelling(key, allowed)
-      raise newException(
-        IOError,
+      return err(
         "Unknown setting '" & key & "' under [" & section & "] in " & path & (
           if suggested.len > 0:
             ", did you mean '" & suggested & "'?"
           else:
             ". [" & section & "] takes " & allowed.join(" and ") & "."
-        ),
+        )
       )
+  ok()
 
-proc readConfigTable*(contents, path: string): Config =
+proc readConfigTable*(contents, path: string): Result[Config, string] =
   ## The sections and settings a configuration file holds, once it is known to
   ## hold nothing else.
-  result = loadConfigTable(contents.normalized(), path)
-  result.checkUnquotedGlobs(path)
-  for section, keys in result.pairs():
-    checkSection(section, keys, path)
+  let table = ?loadConfigTable(contents.normalized(), path)
+  ?table.checkUnquotedGlobs(path)
+  for section, keys in table.pairs():
+    ?checkSection(section, keys, path)
+  ok(table)

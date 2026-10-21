@@ -128,6 +128,18 @@ suite "a track needs a release to build on":
     check "git tag v1.0.0" in refused.output
       # not `pkg-v1.0.0`, which is not this repo's shape
 
+  test "what a refused bump said before refusing is still said, and first":
+    let dir = freshRepo("track-warning-before-refusal")
+    discard run("git tag -d v1.0.0", dir)
+    check setTrack(dir, "enter alpha").code == 0
+    discard commitFile(dir, "a.txt", "hi", "feat: a")
+
+    let refused = run("nimver bump", dir)
+    check refused.code != 0
+    let warned = refused.output.find("releasing on track 'alpha'")
+    check warned >= 0
+    check warned < refused.output.find("no release tag")
+
   test "a prerelease manifest leaves no version to advise tagging":
     # Once the first prerelease is written the manifest is no record of
     # anything that went out, so the advice has to fall back to a placeholder.

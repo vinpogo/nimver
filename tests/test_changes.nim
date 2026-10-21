@@ -7,6 +7,9 @@ import history
 import config
 import semver
 import gitutils
+import effects
+import results
+import changes
 import ./builders
 
 let typeConfig = parseConfig(
@@ -17,10 +20,14 @@ fix = patch
 chore = none
 wip = ignore
 """, "config.ini",
-)
+).value
 
 proc commit(message: string, changedPaths = @["src/main.nim"]): CommitRecord =
   CommitRecord(hash: "0123456789abcdef", message: message, changedPaths: changedPaths)
+
+proc changeFor(snapshot: Snapshot, record: CommitRecord): Option[ChangeEntry] =
+  var effects: Effects
+  history.changeFor(snapshot, record, effects).value
 
 let lonePackage =
   newSnapshot(typeConfig, testWorkspace(@[testPackage("cli", "cli.nimble")]))
