@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.3.1-beta.3] - 2026-10-21
+
+### Commits
+- fix(manifests): release manifests linked to files
+- ci(release): smoke test npm packages on all platforms
+- fix: stage linked release files safely
+- ci: test npm packages across platforms on main
+
 ## [5.3.1-beta.2] - 2026-10-21
 
 ### Commits
