@@ -25,10 +25,11 @@
   "license": "MIT",
   "author": "vingy",
   "bin": {
-    "nimver": "bin/nimver.js"
+    "nimver": "bin/nimver.mjs"
   },
   "files": [
-    "bin/nimver.js"
+    "bin/nimver.mjs",
+    "dist/nimver-*"
   ],
   "engines": {
     "node": ">=18"

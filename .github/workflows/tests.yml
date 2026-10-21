@@ -44,7 +44,7 @@ jobs:
             exit 1
           fi
 
-  js:
+  npm:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -66,13 +66,15 @@ jobs:
         # nimble package directory by itself.
         run: nimble setup -y
 
-      - name: Build the Node bundle
-        run: nimble buildJs -y
-
-      - name: Smoke test the Node bundle
+      - name: Build the binary under its release name
+        # bin/nimver.mjs picks the binary by its release asset name.
         run: |
-          node bin/nimver.js version
-          node bin/nimver.js bump --dry-run
+          nimble buildBinary -y
+          mv dist/nimver dist/nimver-linux-amd64
 
-      - name: Check what would be published
-        run: npm pack --dry-run
+      - name: Smoke test the package
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          npm install --prefix "$RUNNER_TEMP/install" "$RUNNER_TEMP"/vingy-nimver-*.tgz
+          "$RUNNER_TEMP/install/node_modules/.bin/nimver" version
+          "$RUNNER_TEMP/install/node_modules/.bin/nimver" bump --dry-run

@@ -5,7 +5,6 @@ testRepo/
 tests/test_*
 !tests/test_*.nim
 dist/
-/bin/
 node_modules/
 nimble.develop
 nimble.paths

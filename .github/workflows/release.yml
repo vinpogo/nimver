@@ -16,11 +16,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux builds link musl statically, so one binary runs on glibc and
+        # Alpine alike. The Intel macOS binary is cross-compiled on Apple
+        # silicon.
         include:
           - os: ubuntu-24.04
             target: linux-amd64
+            musl: true
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            musl: true
           - os: macos-26
             target: macos-arm64
+          - os: macos-26
+            target: macos-amd64
+            nimflags: --cpu:amd64 --passC:"-arch x86_64" --passL:"-arch x86_64"
           - os: windows-2025
             target: windows-amd64
             extension: .exe
@@ -38,7 +48,14 @@ jobs:
         # nimble package directory by itself.
         run: nimble setup -y
 
+      - name: Install musl
+        if: matrix.musl
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+
       - name: Build binary
+        shell: bash
+        env:
+          NIMVER_NIMFLAGS: ${{ matrix.musl && '--gcc.exe:musl-gcc --gcc.linkerexe:musl-gcc --passL:-static' || matrix.nimflags }}
         run: nimble buildBinary -y
 
       - name: Name the artifact after its target
@@ -53,17 +70,13 @@ jobs:
 
   npm:
     name: npm
+    needs: binaries
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # The OIDC token npm trusted publishing authenticates with.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: jiro4989/setup-nim-action@cb1fc1270b117457dd0d9f610ec981fad3369cec # v2.3.0
-        with:
-          nim-version: "2.2.12"
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -75,17 +88,25 @@ jobs:
         # guaranteed to be recent enough.
         run: npm install -g npm@latest
 
-      - name: Fetch dependencies
-        # Writes nimble.paths, which config.nims hands to the plain `nim`
-        # invocations below: with a lock file present, nim does not search the
-        # nimble package directory by itself.
-        run: nimble setup -y
+      # The package ships the release binaries as they are, picked by
+      # bin/nimver.mjs at run time.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
 
-      - name: Build Node bundle
-        run: nimble buildJs -y
+      - name: Restore the executable bit
+        # Artifacts lose it on upload, and npm packs files with the mode they
+        # have on disk.
+        run: chmod +x dist/nimver-*
 
-      - name: Smoke test the bundle
-        run: node bin/nimver.js version
+      - name: Smoke test the package
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          cd "$(mktemp -d)"
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP"/vingy-nimver-*.tgz
+          npx nimver version
 
       - name: Check what would be published
         run: npm pack --dry-run

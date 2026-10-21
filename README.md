@@ -12,7 +12,6 @@ From npm (needs Node 18+):
 npm install --save-dev @vingy/nimver   # or: npm install -g @vingy/nimver
 ```
 
-The package is scoped, but the command it installs is plain `nimver` (or `npx nimver`).
 
 From Nimble:
 
