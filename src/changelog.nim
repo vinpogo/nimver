@@ -4,7 +4,7 @@
 ## release anyone wrote for a reader. The commits themselves follow as one flat
 ## list: what a release contains, in the words its authors committed.
 
-import std/[strutils, times, tables, sequtils]
+import std/[strutils, times, tables, sequtils, options]
 import ./sysio
 import ./changes
 import ./semver
@@ -34,19 +34,20 @@ proc breakingBullet(entry: ChangeEntry): string =
   else:
     entry.subjectOf()
 
+func sectionLabel*(version: SemVer, packageName = ""): string =
+  ## `packageName` prefixes the version, for changelogs that several packages
+  ## share and where the version alone would not say which package moved.
+  if packageName.len > 0:
+    packageName & " " & $version
+  else:
+    $version
+
 proc buildSection*(
     version: SemVer, entries: seq[ChangeEntry], packageName = ""
 ): string =
-  ## `packageName` prefixes the version in the heading, for changelogs that
-  ## several packages share and where the version alone would not say which
-  ## package moved.
   let date = now().format("yyyy-MM-dd")
-  let versionLabel =
-    if packageName.len > 0:
-      packageName & " " & $version
-    else:
-      $version
-  var parts: seq[string] = @["## [" & versionLabel & "] - " & date]
+  var parts: seq[string] =
+    @["## [" & sectionLabel(version, packageName) & "] - " & date]
 
   let breaking = entries.filterIt(it.breaking)
   if breaking.len > 0:
@@ -85,6 +86,24 @@ proc buildSection*(
       parts.add("- " & firstLine(e.message))
 
   parts.join("\n") & "\n"
+
+func sectionBody*(changelog, label: string): Option[string] =
+  ## The section under the `## [<label>]` heading, without the heading. The
+  ## closing bracket is part of the match, so `1.2.0` does not find the
+  ## section of `1.2.0-rc.1`, nor `1.2.0` that of `web 1.2.0`.
+  let heading = "## [" & label & "]"
+  var body: seq[string] = @[]
+  var inSection = false
+  for line in changelog.splitLines():
+    if inSection:
+      if line.startsWith("## "):
+        break
+      body.add(line)
+    elif line.startsWith(heading):
+      inSection = true
+  if not inSection:
+    return none(string)
+  some(body.join("\n").strip())
 
 proc prependToChangelog*(changelogPath: string, section: string) =
   const header = "# Changelog"

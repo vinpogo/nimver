@@ -1,7 +1,7 @@
 ## Unit tests for rendering a `CHANGELOG.md` section: which groups appear and in
 ## what order, how a bullet is worded, and when a heading names its package.
 
-import std/[unittest, strutils, times]
+import std/[unittest, strutils, times, options]
 import changelog
 import changes
 import semver
@@ -255,3 +255,40 @@ suite "breaking changes":
       @[entry("feat", "feat!: a", breaking = true, level = blMajor)],
     )
     check "### Commits\n- feat!: a" in section
+
+suite "reading a section back":
+  let changelog = [
+    "# Changelog", "", "## [web 1.2.0] - 2026-10-03", "", "### Commits",
+    "- feat: web thing", "", "## [1.2.0-rc.1] - 2026-10-02", "", "### Commits",
+    "- feat: rc thing", "", "## [1.2.0] - 2026-10-01", "", "- A note.", "",
+    "### Commits", "- feat: released thing", "", "## [1.1.0] - 2026-09-01", "", "",
+  ].join("\n")
+
+  test "the body under the heading, without the heading or the next section":
+    check sectionBody(changelog, "1.2.0") ==
+      some("- A note.\n\n### Commits\n- feat: released thing")
+
+  test "a release does not find its prerelease or another package's section":
+    check sectionBody(changelog, "1.2.0").get.contains("released thing")
+    check sectionBody(changelog, "1.2.0-rc.1").get.contains("rc thing")
+    check sectionBody(changelog, "web 1.2.0").get.contains("web thing")
+
+  test "the last section runs to the end of the file":
+    check sectionBody(changelog & "### Commits\n- fix: last\n", "1.1.0") ==
+      some("### Commits\n- fix: last")
+
+  test "a section with nothing under it is empty, not missing":
+    check sectionBody(changelog, "1.1.0") == some("")
+
+  test "a version with no section is missing":
+    check sectionBody(changelog, "1.0.0").isNone
+    check sectionBody(changelog, "2.0.0").isNone
+
+  test "a section written by buildSection reads back without its heading":
+    let section = buildSection(
+      parseSemVer("1.3.0"),
+      @[entry("feat", "feat: a", level = blMinor, releaseNote = "Noted.")],
+      "cli",
+    )
+    check sectionBody("# Changelog\n\n" & section, "cli 1.3.0") ==
+      some("- Noted.\n\n### Commits\n- feat: a")
