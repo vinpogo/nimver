@@ -1,5 +1,5 @@
 import std/[strutils, sequtils, options]
-import ./result
+import results
 
 type
   ParsedCommit* = object
@@ -92,8 +92,8 @@ func parsePrefix(prefix: string): Option[ParsedHeader] =
 
   some(ParsedHeader(breaking: breaking, commitType: remaining, scope: scope))
 
-func parseHeaderLine(line: string): Result[ParsedHeader] =
-  let malformed = Failure[ParsedHeader](
+func parseHeaderLine(line: string): Result[ParsedHeader, string] =
+  let malformed = Result[ParsedHeader, string].err(
     "Header '" & line & "' does not match 'type(scope)!: subject'."
   )
 
@@ -109,7 +109,7 @@ func parseHeaderLine(line: string): Result[ParsedHeader] =
   if subject.len == 0:
     return malformed
 
-  Success(
+  ok(
     ParsedHeader(
       commitType: header.get().commitType,
       breaking: header.get().breaking,
@@ -118,14 +118,14 @@ func parseHeaderLine(line: string): Result[ParsedHeader] =
     )
   )
 
-func parseCommitMessage*(raw: string): Result[ParsedCommit] =
+func parseCommitMessage*(raw: string): Result[ParsedCommit, string] =
   let lines = stripComments(raw)
   if lines.len == 0:
-    return Failure[ParsedCommit]("Commit message is empty.")
+    return err("Commit message is empty.")
 
   let parsedHeader = parseHeaderLine(lines[0])
-  if isFailure(parsedHeader):
-    return Failure[ParsedCommit](parsedHeader.error)
+  if parsedHeader.isErr:
+    return err(parsedHeader.error)
 
   let commitType = parsedHeader.value.commitType
   let scope = parsedHeader.value.scope
@@ -142,4 +142,4 @@ func parseCommitMessage*(raw: string): Result[ParsedCommit] =
     breakingNote: breakingFooter.get(""),
     rawMessage: raw,
   )
-  Success(parsed)
+  ok(parsed)

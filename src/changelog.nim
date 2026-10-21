@@ -5,7 +5,6 @@
 ## list: what a release contains, in the words its authors committed.
 
 import std/[strutils, times, tables, sequtils, options]
-import ./sysio
 import ./changes
 import ./semver
 
@@ -105,20 +104,20 @@ func sectionBody*(changelog, label: string): Option[string] =
     return none(string)
   some(body.join("\n").strip())
 
-proc prependToChangelog*(changelogPath: string, section: string) =
+func withSection*(existing: Option[string], section: string): string =
+  ## A changelog with `section` as its newest entry; `existing` is the file as
+  ## it stands, if there is one.
   const header = "# Changelog"
-  if not fileAt(changelogPath):
-    writeFileContents(changelogPath, header & "\n\n" & section)
-    return
+  if existing.isNone:
+    return header & "\n\n" & section
 
-  let existing = readFileContents(changelogPath)
-  if existing.startsWith(header):
-    let idx = existing.find('\n')
+  if existing.get.startsWith(header):
+    let idx = existing.get.find('\n')
     let rest =
       if idx == -1:
         ""
       else:
-        existing[idx + 1 .. ^1].strip(leading = true, trailing = false)
-    writeFileContents(changelogPath, header & "\n\n" & section & "\n" & rest)
+        existing.get[idx + 1 .. ^1].strip(leading = true, trailing = false)
+    header & "\n\n" & section & "\n" & rest
   else:
-    writeFileContents(changelogPath, header & "\n\n" & section & "\n" & existing)
+    header & "\n\n" & section & "\n" & existing.get

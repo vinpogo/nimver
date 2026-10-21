@@ -1,5 +1,7 @@
 import std/strutils
+import results
 import ../sysio
+import ../effects
 import ../gitutils
 
 const HookMarker = "# Installed by nimver."
@@ -29,29 +31,33 @@ exit 1
 
 const RetiredHooks = ["post-commit", "post-rewrite"]
 
-proc writeHook(hooksDir, name, content: string, force: bool) =
+proc writeHook(hooksDir, name, content: string, force: bool): Result[Effects, string] =
   let hookPath = hooksDir / name
   if fileAt(hookPath) and not force:
-    raise newException(
-      IOError,
-      "Hook already exists at " & hookPath & ". Re-run with --force to overwrite.",
-    )
-  writeFileContents(hookPath, content)
-  makeExecutable(hookPath)
+    return
+      err("Hook already exists at " & hookPath & ". Re-run with --force to overwrite.")
+  ok(@[writeTo(hookPath, content), markExecutable(hookPath)])
 
-proc removeRetiredHooks(hooksDir: string) =
+proc removeRetiredHooks(hooksDir: string): Result[Effects, string] =
+  var removals: Effects = @[]
   for hookName in RetiredHooks:
     let hookPath = hooksDir / hookName
-    if fileAt(hookPath) and readFileContents(hookPath).contains(HookMarker):
-      deleteFile(hookPath)
-      echo "Removed obsolete ", hookName, " hook at ", hookPath
+    if fileAt(hookPath) and (?readFileContents(hookPath)).contains(HookMarker):
+      removals.add(deleteAt(hookPath))
+      removals.add(say("Removed obsolete " & hookName & " hook at " & hookPath))
+  ok(removals)
 
-proc cmdInstallHooks*(repoRoot: string, force: bool) =
-  let hooksDir = gitPath(repoRoot, "hooks")
+proc cmdInstallHooks*(
+    repoRoot: string, force: bool, effects: var Effects
+): Result[void, string] =
+  let hooksDir = ?gitPath(repoRoot, "hooks")
   if not directoryAt(hooksDir):
-    raise newException(IOError, "No hooks directory found at " & hooksDir)
+    return err("No hooks directory found at " & hooksDir)
 
-  writeHook(hooksDir, "commit-msg", commitMsgHook(), force)
-  echo "Installed commit-msg hook at ", hooksDir / "commit-msg"
+  let hookWrites = ?writeHook(hooksDir, "commit-msg", commitMsgHook(), force)
+  let removals = ?removeRetiredHooks(hooksDir)
 
-  removeRetiredHooks(hooksDir)
+  effects.add(hookWrites)
+  effects.add(say("Installed commit-msg hook at " & hooksDir / "commit-msg"))
+  effects.add(removals)
+  ok()

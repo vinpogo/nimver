@@ -1,5 +1,7 @@
 import std/[options, strutils, sequtils, tables]
 import ./sysio
+import results
+import ./effects
 import config
 import changes
 import adapters/manifest
@@ -134,32 +136,32 @@ proc changelogPackageLabelFor(
 
 proc releasedChangelogFor*(
     repoRoot: string, projectWorkspace: Workspace, requestedPackageName: Option[string]
-): tuple[path, packageLabel: string] =
+): Result[tuple[path, packageLabel: string], string] =
   ## Where a package's released sections were written, and the name their
   ## headings carry: the same file and label `bump` used for them.
   case projectWorkspace.strategy
   of wsFixed:
     if requestedPackageName.isSome:
-      raise newException(
-        IOError,
-        "workspace strategy is 'fixed', so every package shares the one changelog at the repository root. Drop the package argument, or set strategy = independent.",
+      return err(
+        "workspace strategy is 'fixed', so every package shares the one changelog at the repository root. Drop the package argument, or set strategy = independent."
       )
-    (repoRoot / ChangelogName, "")
+    ok((repoRoot / ChangelogName, ""))
   of wsIndependent:
     let package =
       if requestedPackageName.isSome:
-        projectWorkspace.findPackage(requestedPackageName.get)
+        ?projectWorkspace.findPackage(requestedPackageName.get)
       elif projectWorkspace.packages.len == 1:
         projectWorkspace.packages[0]
       else:
-        raise newException(
-          IOError,
+        return err(
           "packages are versioned independently, so name the one whose changelog to read: " &
-            projectWorkspace.packageNames().join(", "),
+            projectWorkspace.packageNames().join(", ")
         )
-    (
-      changelogPathFor(repoRoot, package),
-      changelogPackageLabelFor(repoRoot, projectWorkspace, package),
+    ok(
+      (
+        changelogPathFor(repoRoot, package),
+        changelogPackageLabelFor(repoRoot, projectWorkspace, package),
+      )
     )
 
 func claimedBy(entries: seq[ChangeEntry], package: WorkspacePackage): seq[ChangeEntry] =
@@ -179,17 +181,14 @@ proc taggableVersion(manifests: seq[ProjectManifest]): Option[SemVer] =
   ## makes on its own - neither is a reason for a refusal to fail instead of
   ## being printed.
   for manifest in manifests:
-    try:
-      let version = readVersion(manifest)
-      if not version.isPrerelease():
-        return some(version)
-    except CatchableError:
-      discard
+    let version = readVersion(manifest)
+    if version.isOk and not version.value.isPrerelease():
+      return some(version.value)
   none(SemVer)
 
 func noReleaseToBuildOn(
     naming: ReleaseNaming, track: Track, advisedVersion: Option[SemVer]
-): ref IOError =
+): string =
   ## One refusal with two faces. On a track there is no release to measure the
   ## prerelease from; off one the manifest's version is itself the only record
   ## of an untagged history, so bumping it would charge for those changes twice.
@@ -217,9 +216,9 @@ func noReleaseToBuildOn(
     else:
       "so there is nothing to bump from: the version in the manifest already accounts for that history, and releasing from it would count the same changes twice. Tag the version it is already on (`git tag " &
         tagName & "`), then bump again."
-  newException(IOError, named & " no release tag in this branch's history, " & rest)
+  named & " no release tag in this branch's history, " & rest
 
-func alreadyStable(naming: ReleaseNaming, current: SemVer): ref IOError =
+func alreadyStable(naming: ReleaseNaming, current: SemVer): string =
   ## `--stable` promotes a package to its first stable release, and one that has
   ## had it has nothing left to promote. Refused rather than ignored: a
   ## promotion releases with nothing pending, so a run that quietly did nothing
@@ -229,11 +228,8 @@ func alreadyStable(naming: ReleaseNaming, current: SemVer): ref IOError =
       "package '" & naming.packageName & "' is"
     else:
       "this repository is"
-  newException(
-    IOError,
-    named & " already at " & $current &
-      ", so there is nothing for `--stable` to promote. Drop it: from 1.0.0 on the commits decide the version.",
-  )
+  named & " already at " & $current &
+    ", so there is nothing for `--stable` to promote. Drop it: from 1.0.0 on the commits decide the version."
 
 func cutsFirstStable(intent: StableIntent, current, base: SemVer): bool =
   ## Whether this release is the package's first stable one, or a prerelease of
@@ -279,17 +275,18 @@ proc planVersion(
     package: WorkspacePackage,
     intent: StableIntent,
     release: var PackageRelease,
-) =
+    effects: var Effects,
+): Result[void, string] =
   ## The two walks a version needs, and what each answers. Off a track they are
   ## the same walk: the boundaries coincide, so there is nothing to ask twice.
   let notesBoundary = if track.hasTrack: vbAnyVersion else: vbRelease
-  let notes = pendingChanges(repoRoot, currentConfig, naming, notesBoundary)
+  let notes = ?pendingChanges(repoRoot, currentConfig, naming, effects, notesBoundary)
   release.entries = notes.entries.claimedBy(package)
   release.trackLevel = highestBumpLevel(release.entries)
 
   let sinceRelease =
     if track.hasTrack:
-      pendingChanges(repoRoot, currentConfig, naming, vbRelease)
+      ?pendingChanges(repoRoot, currentConfig, naming, effects, vbRelease)
     else:
       notes
   # Before releasability: having a release behind you is a property of the
@@ -297,16 +294,16 @@ proc planVersion(
   # repository of nothing but `chore:` commits would report nothing to bump and
   # then refuse the moment a `feat:` landed.
   if sinceRelease.boundaryVersion.isNone():
-    raise noReleaseToBuildOn(naming, track, taggableVersion(@[package.manifest]))
+    return err(noReleaseToBuildOn(naming, track, taggableVersion(@[package.manifest])))
   release.level = highestBumpLevel(sinceRelease.entries.claimedBy(package))
 
   # Read before releasability for the same reason as the boundary above:
   # `--stable` releases with nothing pending, and a package that is already
   # stable has to be refused whether or not anything is waiting.
-  release.current = readVersion(package.manifest)
+  release.current = ?readVersion(package.manifest)
   let base = baseVersionFor(sinceRelease, release.current)
   if intent == siRequested and release.current.isStable():
-    raise alreadyStable(naming, release.current)
+    return err(alreadyStable(naming, release.current))
   release.cutsFirstStable = cutsFirstStable(intent, release.current, base)
   release.cutLevel =
     if release.cutsFirstStable:
@@ -314,7 +311,7 @@ proc planVersion(
     else:
       heldBelowStable(release.level, release.current)
   if not release.isReleasable():
-    return
+    return ok()
 
   let core =
     if release.cutsFirstStable:
@@ -323,45 +320,48 @@ proc planVersion(
       bump(base, release.cutLevel)
   release.next =
     if track.hasTrack:
-      core.onTrack(track.name, nextIteration(repoRoot, naming, core))
+      core.onTrack(track.name, ?nextIteration(repoRoot, naming, core))
     else:
       core
+  ok()
 
 proc planRelease*(
     repoRoot: string,
     projectWorkspace: Workspace,
     currentConfig: NimverConfig,
     package: WorkspacePackage,
+    effects: var Effects,
     track = noTrack(),
     promoteToStable = false,
-): PackageRelease =
+): Result[PackageRelease, string] =
   ## Every package reads its own stretch of history, ending at its own last
   ## release. A change touching two packages is therefore counted once for
   ## each, however far apart the two last went out - which is the whole point
   ## of releasing them independently.
-  result.name = package.name
-  result.manifests = @[package.manifest]
+  var release = PackageRelease(name: package.name, manifests: @[package.manifest])
   let naming =
     newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart(), track)
-  planVersion(
+  ?planVersion(
     repoRoot,
     naming,
     currentConfig,
     track,
     package,
     stableIntent(promoteToStable, track),
-    result,
+    release,
+    effects,
   )
-  if not result.isReleasable():
-    return
+  if not release.isReleasable():
+    return ok(release)
 
-  result.section = buildSection(
-    result.next,
-    result.entries,
+  release.section = buildSection(
+    release.next,
+    release.entries,
     changelogPackageLabelFor(repoRoot, projectWorkspace, package),
   )
-  result.changelogPath = changelogPathFor(repoRoot, package)
-  result.tag = releaseTagFor(projectWorkspace, package.name, result.next)
+  release.changelogPath = changelogPathFor(repoRoot, package)
+  release.tag = releaseTagFor(projectWorkspace, package.name, release.next)
+  ok(release)
 
 proc fixedReleaseNaming(projectWorkspace: Workspace, track: Track): ReleaseNaming =
   ## One version for the whole repository, so one stretch of history behind it.
@@ -374,73 +374,75 @@ proc fixedReleaseNaming(projectWorkspace: Workspace, track: Track): ReleaseNamin
       ""
   newReleaseNaming(survivingName, namespaced = false, track = track)
 
-proc sharedCurrentVersion(packages: seq[WorkspacePackage]): SemVer =
+proc sharedCurrentVersion(packages: seq[WorkspacePackage]): Result[SemVer, string] =
   ## The one version a fixed workspace is on. Manifests that disagree have to be
   ## reconciled by hand: picking one of them would silently move the others.
-  result = readVersion(packages[0].manifest)
+  let shared = ?readVersion(packages[0].manifest)
   for package in packages[1 .. ^1]:
-    let packageVersion = readVersion(package.manifest)
-    if packageVersion != result:
-      raise newException(
-        IOError,
+    let packageVersion = ?readVersion(package.manifest)
+    if packageVersion != shared:
+      return err(
         "Fixed workspace manifests must have the same version: package '" &
-          packages[0].name & "' is " & $result & ", package '" & package.name & "' is " &
-          $packageVersion,
+          packages[0].name & "' is " & $shared & ", package '" & package.name & "' is " &
+          $packageVersion
       )
+  ok(shared)
 
 proc planFixedRelease*(
     repoRoot: string,
     projectWorkspace: Workspace,
     currentConfig: NimverConfig,
+    effects: var Effects,
     track = noTrack(),
     promoteToStable = false,
-): PackageRelease =
+): Result[PackageRelease, string] =
   ## The whole repository moving at once: one version across every manifest, one
   ## changelog section at the repository root, one tag - and therefore one
   ## track, whatever any package might have asked for.
-  result.manifests = projectWorkspace.packages.mapIt(it.manifest)
+  var release = PackageRelease(manifests: projectWorkspace.packages.mapIt(it.manifest))
   let naming = fixedReleaseNaming(projectWorkspace, track)
   let notesBoundary = if track.hasTrack: vbAnyVersion else: vbRelease
-  let notes = pendingChanges(repoRoot, currentConfig, naming, notesBoundary)
-  result.entries = notes.entries
-  result.trackLevel = highestBumpLevel(result.entries)
+  let notes = ?pendingChanges(repoRoot, currentConfig, naming, effects, notesBoundary)
+  release.entries = notes.entries
+  release.trackLevel = highestBumpLevel(release.entries)
 
   let sinceRelease =
     if track.hasTrack:
-      pendingChanges(repoRoot, currentConfig, naming, vbRelease)
+      ?pendingChanges(repoRoot, currentConfig, naming, effects, vbRelease)
     else:
       notes
   if sinceRelease.boundaryVersion.isNone():
-    raise noReleaseToBuildOn(naming, track, taggableVersion(result.manifests))
-  result.level = highestBumpLevel(sinceRelease.entries)
+    return err(noReleaseToBuildOn(naming, track, taggableVersion(release.manifests)))
+  release.level = highestBumpLevel(sinceRelease.entries)
 
   let intent = stableIntent(promoteToStable, track)
-  result.current = sharedCurrentVersion(projectWorkspace.packages)
-  let base = baseVersionFor(sinceRelease, result.current)
-  if intent == siRequested and result.current.isStable():
-    raise alreadyStable(naming, result.current)
-  result.cutsFirstStable = cutsFirstStable(intent, result.current, base)
-  result.cutLevel =
-    if result.cutsFirstStable:
+  release.current = ?sharedCurrentVersion(projectWorkspace.packages)
+  let base = baseVersionFor(sinceRelease, release.current)
+  if intent == siRequested and release.current.isStable():
+    return err(alreadyStable(naming, release.current))
+  release.cutsFirstStable = cutsFirstStable(intent, release.current, base)
+  release.cutLevel =
+    if release.cutsFirstStable:
       blMajor
     else:
-      heldBelowStable(result.level, result.current)
-  if not result.isReleasable():
-    return
+      heldBelowStable(release.level, release.current)
+  if not release.isReleasable():
+    return ok(release)
 
   let core =
-    if result.cutsFirstStable:
+    if release.cutsFirstStable:
       FirstStableVersion
     else:
-      bump(base, result.cutLevel)
-  result.next =
+      bump(base, release.cutLevel)
+  release.next =
     if track.hasTrack:
-      core.onTrack(track.name, nextIteration(repoRoot, naming, core))
+      core.onTrack(track.name, ?nextIteration(repoRoot, naming, core))
     else:
       core
-  result.section = buildSection(result.next, result.entries)
-  result.changelogPath = repoRoot / ChangelogName
-  result.tag = releaseTagFor(projectWorkspace, result.name, result.next)
+  release.section = buildSection(release.next, release.entries)
+  release.changelogPath = repoRoot / ChangelogName
+  release.tag = releaseTagFor(projectWorkspace, release.name, release.next)
+  ok(release)
 
 proc changelogWrites*(releases: seq[PackageRelease]): seq[ChangelogWrite] =
   var writeIndexByPath = initTable[string, int]()

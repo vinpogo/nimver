@@ -1,7 +1,9 @@
 ## Filesystem, process and CLI primitives, backed by the OS on the C backend and
-## by Node's `fs`/`child_process` on the JS backend.
+## by Node's `fs`/`child_process` on the JS backend. Whatever can fail answers
+## with a Result rather than raising.
 
 import std/[os, sequtils]
+import results
 export
   os.`/`, os.parentDir, os.extractFilename, os.isAbsolute, os.splitFile,
   os.relativePath, os.lastPathPart, os.changeFileExt
@@ -9,7 +11,36 @@ export
 type CommandResult* = tuple[output: string, exitCode: int]
 
 when defined(js):
-  type SpawnResult = ref object of RootObj
+  type
+    SpawnResult = ref object of RootObj
+    Attempt = ref object of RootObj
+
+  proc jsAttempt(
+    action: proc(): cstring
+  ): Attempt {.
+    importjs:
+      "((f) => { try { return {ok: true, value: f()}; } catch (e) { return {ok: false, value: String((e && e.message) || e)}; } })(#)"
+  .}
+
+  proc attemptSucceeded(attempt: Attempt): bool {.importjs: "#.ok".}
+
+  proc attemptValue(attempt: Attempt): cstring {.importjs: "#.value".}
+
+  proc attempt(action: proc(): cstring): Result[string, string] =
+    ## Node's `fs` throws JavaScript errors, which Nim's `except` does not see.
+    let attempted = jsAttempt(action)
+    if attempted.attemptSucceeded:
+      ok($attempted.attemptValue)
+    else:
+      err($attempted.attemptValue)
+
+  proc attemptAction(action: proc()): Result[void, string] =
+    discard ?attempt(
+      proc(): cstring =
+        action()
+        ""
+    )
+    ok()
 
   proc jsReadFile(
     path: cstring
@@ -70,11 +101,17 @@ when defined(js):
 
   proc jsWriteErr(message: cstring) {.importjs: "process.stderr.write(#)".}
 
-  proc readFileContents*(path: string): string =
-    $jsReadFile(path.cstring)
+  proc readFileContents*(path: string): Result[string, string] =
+    attempt(
+      proc(): cstring =
+        jsReadFile(path.cstring)
+    )
 
-  proc writeFileContents*(path, contents: string) =
-    jsWriteFile(path.cstring, contents.cstring)
+  proc writeFileContents*(path, contents: string): Result[void, string] =
+    attemptAction(
+      proc() =
+        jsWriteFile(path.cstring, contents.cstring)
+    )
 
   proc pathExists*(path: string): bool =
     jsExists(path.cstring)
@@ -85,24 +122,44 @@ when defined(js):
   proc directoryAt*(path: string): bool =
     jsIsDirectory(path.cstring)
 
-  proc makeDirectory*(path: string) =
-    jsMkdir(path.cstring)
+  proc makeDirectory*(path: string): Result[void, string] =
+    attemptAction(
+      proc() =
+        jsMkdir(path.cstring)
+    )
 
-  proc deleteFile*(path: string) =
-    jsUnlink(path.cstring)
+  proc deleteFile*(path: string): Result[void, string] =
+    attemptAction(
+      proc() =
+        jsUnlink(path.cstring)
+    )
 
-  proc makeExecutable*(path: string) =
-    jsChmod(path.cstring)
+  proc makeExecutable*(path: string): Result[void, string] =
+    attemptAction(
+      proc() =
+        jsChmod(path.cstring)
+    )
 
-  proc filesIn*(directory: string): seq[string] =
-    for entry in jsReadDir(directory.cstring):
+  proc filesIn*(directory: string): Result[seq[string], string] =
+    var entries: seq[cstring]
+    ?attemptAction(
+      proc() =
+        entries = jsReadDir(directory.cstring)
+    )
+    var files: seq[string] = @[]
+    for entry in entries:
       let entryPath = directory / $entry
       if fileAt(entryPath):
-        result.add(entryPath)
+        files.add(entryPath)
+    ok(files)
 
-  proc runCommand*(command: string, arguments: seq[string]): CommandResult =
+  proc runCommand*(
+      command: string, arguments: seq[string]
+  ): Result[CommandResult, string] =
+    ## `spawnSync` reports a command it could not start in its result rather
+    ## than by throwing, as a status of 1.
     let spawned = jsSpawn(command.cstring, arguments.mapIt(it.cstring))
-    ($spawned.spawnOutput(), spawned.spawnStatus())
+    ok(($spawned.spawnOutput(), spawned.spawnStatus()))
 
   proc cliArgs*(): seq[string] =
     jsArgv().mapIt($it)
@@ -114,18 +171,18 @@ when defined(js):
     jsWriteErr((message & "\n").cstring)
 
 else:
-  import std/[osproc, strutils]
+  import std/[osproc, strutils, sugar]
 
   const ExecutablePermissions = {
     fpUserRead, fpUserWrite, fpUserExec, fpGroupRead, fpGroupExec, fpOthersRead,
     fpOthersExec,
   }
 
-  proc readFileContents*(path: string): string =
-    readFile(path)
+  proc readFileContents*(path: string): Result[string, string] =
+    catch(readFile(path)).mapErr(e => e.msg)
 
-  proc writeFileContents*(path, contents: string) =
-    writeFile(path, contents)
+  proc writeFileContents*(path, contents: string): Result[void, string] =
+    catch(writeFile(path, contents)).mapErr(e => e.msg)
 
   proc pathExists*(path: string): bool =
     fileExists(path) or dirExists(path)
@@ -136,22 +193,29 @@ else:
   proc directoryAt*(path: string): bool =
     dirExists(path)
 
-  proc makeDirectory*(path: string) =
-    createDir(path)
+  proc makeDirectory*(path: string): Result[void, string] =
+    catch(createDir(path)).mapErr(e => e.msg)
 
-  proc deleteFile*(path: string) =
-    removeFile(path)
+  proc deleteFile*(path: string): Result[void, string] =
+    catch(removeFile(path)).mapErr(e => e.msg)
 
-  proc makeExecutable*(path: string) =
-    setFilePermissions(path, ExecutablePermissions)
+  proc makeExecutable*(path: string): Result[void, string] =
+    catch(setFilePermissions(path, ExecutablePermissions)).mapErr(e => e.msg)
 
-  proc filesIn*(directory: string): seq[string] =
+  proc regularFilesIn(directory: string): seq[string] =
     for entryKind, entryPath in walkDir(directory):
       if entryKind == pcFile:
         result.add(entryPath)
 
-  proc runCommand*(command: string, arguments: seq[string]): CommandResult =
-    execCmdEx(command & " " & arguments.mapIt(it.quoteShell).join(" "))
+  proc filesIn*(directory: string): Result[seq[string], string] =
+    catch(regularFilesIn(directory)).mapErr(e => e.msg)
+
+  proc runCommand*(
+      command: string, arguments: seq[string]
+  ): Result[CommandResult, string] =
+    catch(execCmdEx(command & " " & arguments.mapIt(it.quoteShell).join(" "))).mapErr(
+      e => e.msg
+    )
 
   proc cliArgs*(): seq[string] =
     commandLineParams()

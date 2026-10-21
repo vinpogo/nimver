@@ -1,5 +1,6 @@
 import std/[options, strutils, sequtils, tables]
 import ./sysio
+import results
 
 type CommitRecord* = object
   hash*: string
@@ -11,36 +12,30 @@ const
   RecordSeparator = "\x1e"
   FieldSeparator = "\x1f"
 
-proc tryRunGit(args: seq[string]): CommandResult =
+proc tryRunGit(args: seq[string]): Result[CommandResult, string] =
   runCommand("git", args)
 
-proc runGit(args: seq[string]): string =
-  let (output, code) = tryRunGit(args)
+proc runGit*(args: seq[string]): Result[string, string] =
+  let (output, code) = ?tryRunGit(args)
   if code != 0:
-    raise newException(IOError, "git " & args.join(" ") & " failed: " & output.strip())
-  output
+    return err("git " & args.join(" ") & " failed: " & output.strip())
+  ok(output)
 
-proc findRepoRoot*(): string =
-  runGit(@["rev-parse", "--show-toplevel"]).strip()
+proc findRepoRoot*(): Result[string, string] =
+  ok((?runGit(@["rev-parse", "--show-toplevel"])).strip())
 
-proc gitPath*(repoRoot: string, relative: string): string =
-  let resolved = runGit(@["-C", repoRoot, "rev-parse", "--git-path", relative]).strip()
+proc gitPath*(repoRoot: string, relative: string): Result[string, string] =
+  let resolved =
+    (?runGit(@["-C", repoRoot, "rev-parse", "--git-path", relative])).strip()
   if isAbsolute(resolved):
-    resolved
+    ok(resolved)
   else:
-    repoRoot / resolved
+    ok(repoRoot / resolved)
 
-proc gitAdd*(repoRoot: string, path: string) =
-  discard runGit(@["-C", repoRoot, "add", "-A", "--", path])
-
-proc gitCommit*(repoRoot: string, message: string) =
-  discard runGit(@["-C", repoRoot, "commit", "-m", message])
-
-proc gitTag*(repoRoot: string, tag: string) =
-  discard runGit(@["-C", repoRoot, "tag", "-a", tag, "-m", tag])
-
-proc gitCommitsIn*(repoRoot: string, revisionRange: string): seq[CommitRecord] =
-  runGit(
+proc gitCommitsIn*(
+    repoRoot: string, revisionRange: string
+): Result[seq[CommitRecord], string] =
+  let log = ?runGit(
     @[
       "-C",
       repoRoot,
@@ -52,18 +47,21 @@ proc gitCommitsIn*(repoRoot: string, revisionRange: string): seq[CommitRecord] =
       revisionRange,
     ]
   )
-    .split(RecordSeparator)
-    .filterIt(it.strip().len > 0)
-    .mapIt(it.split(FieldSeparator))
-    .filterIt(it.len >= 4)
-    .mapIt(
-      CommitRecord(
-        hash: it[0].strip(),
-        parentHash: it[1].strip(),
-        message: it[2].strip(),
-        changedPaths: it[3].splitLines().mapIt(it.strip()).filterIt(it.len > 0),
+  ok(
+    log
+      .split(RecordSeparator)
+      .filterIt(it.strip().len > 0)
+      .mapIt(it.split(FieldSeparator))
+      .filterIt(it.len >= 4)
+      .mapIt(
+        CommitRecord(
+          hash: it[0].strip(),
+          parentHash: it[1].strip(),
+          message: it[2].strip(),
+          changedPaths: it[3].splitLines().mapIt(it.strip()).filterIt(it.len > 0),
+        )
       )
-    )
+  )
 
 func tagCommit(parts: seq[string]): string =
   if parts.len >= 3:
@@ -77,41 +75,51 @@ func groupByCommit(
   for (commit, tagName) in pairs:
     result.mgetOrPut(commit, @[]).add(tagName)
 
-proc gitTagsByCommit*(repoRoot: string): Table[string, seq[string]] =
-  runGit(
+proc gitTagsByCommit*(repoRoot: string): Result[Table[string, seq[string]], string] =
+  let refs = ?runGit(
     @[
       "-C", repoRoot, "for-each-ref",
       "--format=%(objectname) %(*objectname) %(refname:strip=2)", "refs/tags",
     ]
   )
-    .splitLines()
-    .filterIt(it.strip().len > 0)
-    .mapIt(it.splitWhitespace())
-    .filterIt(it.len >= 2)
-    .mapIt((commit: tagCommit(it), tagName: it[^1]))
-    .groupByCommit()
+  ok(
+    refs
+      .splitLines()
+      .filterIt(it.strip().len > 0)
+      .mapIt(it.splitWhitespace())
+      .filterIt(it.len >= 2)
+      .mapIt((commit: tagCommit(it), tagName: it[^1]))
+      .groupByCommit()
+  )
 
-proc gitFileAtRevision*(repoRoot, revision, path: string): Option[string] =
-  let (output, code) = tryRunGit(@["-C", repoRoot, "show", revision & ":" & path])
+proc gitFileAtRevision*(
+    repoRoot, revision, path: string
+): Result[Option[string], string] =
+  let (output, code) = ?tryRunGit(@["-C", repoRoot, "show", revision & ":" & path])
   if code != 0:
-    return none(string)
-  some(output)
+    return ok(none(string))
+  ok(some(output))
 
-proc gitRootEntryNames*(repoRoot, revision: string): seq[string] =
-  runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision & ":"])
-    .splitLines()
-    .filterIt(it.strip().len > 0)
-    .mapIt(it.strip())
+func listedNames(listing: string): seq[string] =
+  listing.splitLines().filterIt(it.strip().len > 0).mapIt(it.strip())
 
-proc gitPathsAtRevision*(repoRoot, revision: string, paths: seq[string]): seq[string] =
+proc gitRootEntryNames*(repoRoot, revision: string): Result[seq[string], string] =
+  ok(listedNames(?runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision & ":"])))
+
+proc gitPathsAtRevision*(
+    repoRoot, revision: string, paths: seq[string]
+): Result[seq[string], string] =
   ## Those of `paths` that exist in the revision's tree.
-  runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision, "--"] & paths)
-    .splitLines()
-    .filterIt(it.strip().len > 0)
-    .mapIt(it.strip())
+  ok(
+    listedNames(
+      ?runGit(@["-C", repoRoot, "ls-tree", "--name-only", revision, "--"] & paths)
+    )
+  )
 
-proc tagExists*(repoRoot: string, tag: string): bool =
+proc tagExists*(repoRoot: string, tag: string): Result[bool, string] =
   ## Asked before a release writes anything: `git tag` refusing a name it
   ## already knows would otherwise fail after the manifests had moved.
-  tryRunGit(@["-C", repoRoot, "rev-parse", "--verify", "--quiet", "refs/tags/" & tag]).exitCode ==
-    0
+  let lookup = ?tryRunGit(
+    @["-C", repoRoot, "rev-parse", "--verify", "--quiet", "refs/tags/" & tag]
+  )
+  ok(lookup.exitCode == 0)

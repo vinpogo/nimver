@@ -7,7 +7,9 @@
 ## past version *was* cut on is recorded already, in the tag names.
 
 import std/[algorithm, sequtils, strutils, tables]
+import results
 import ./sysio
+import ./effects
 import ./config
 import ./semver
 
@@ -80,21 +82,19 @@ func parseTrackEntry(spelled: string): Track =
 func renderTrack(track: Track): string =
   track.name & (if track.promotesToStable: "!" else: "")
 
-func strayMarker(line, path: string): ref IOError =
+func strayMarker(line, path: string): string =
   ## `!` marks the track whose first version is 1.0.0, so it has nothing to
   ## mark without a track name - and `<package> =` already means off the track,
   ## so `<package> = !` would be saying two things at once.
-  newException(
-    IOError,
-    "Stray '!' in " & path & ": '" & line &
-      "'. A '!' marks the track whose first version is 1.0.0, so it needs a track name: write `rc!`, or drop the '!'.",
-  )
+  "Stray '!' in " & path & ": '" & line &
+    "'. A '!' marks the track whose first version is 1.0.0, so it needs a track name: write `rc!`, or drop the '!'."
 
-proc parseTrackSelection*(contents, path: string): TrackSelection =
+proc parseTrackSelection*(contents, path: string): Result[TrackSelection, string] =
   ## A line with no `=` is the default track; `<package> = <track>` overrides
   ## one package, and an empty value takes it off. A trailing `!` on a track
   ## name is `--stable`, recorded with the track it was entered with. Blank
   ## lines and `;`/`#` comments are ignored.
+  var selection: TrackSelection
   var sawDefault = false
   for rawLine in contents.splitLines():
     let line = rawLine.strip()
@@ -104,52 +104,49 @@ proc parseTrackSelection*(contents, path: string): TrackSelection =
     let equals = line.find('=')
     if equals == -1:
       if sawDefault:
-        raise newException(
-          IOError,
+        return err(
           "More than one default track in " & path & ": '" & line & "'. Write `" & line &
-            "` once for every package, or `<package> = " & line & "` for one of them.",
+            "` once for every package, or `<package> = " & line & "` for one of them."
         )
       let entry = parseTrackEntry(line)
       if entry.name.len == 0:
-        raise strayMarker(line, path)
+        return err(strayMarker(line, path))
       let problem = trackNameProblem(entry.name)
       if problem.len > 0:
-        raise newException(
-          IOError,
+        return err(
           "Invalid track name '" & entry.name & "' in " & path & ": a track name " &
-            problem & ".",
+            problem & "."
         )
-      result.default = entry
+      selection.default = entry
       sawDefault = true
       continue
 
     let packageName = line[0 ..< equals].strip()
     let spelled = line[equals + 1 .. ^1].strip()
     if packageName.len == 0:
-      raise newException(
-        IOError,
+      return err(
         "Missing package name in " & path & ": '" & line &
-          "'. Write `<package> = <track>`, or the track on its own for every package.",
+          "'. Write `<package> = <track>`, or the track on its own for every package."
       )
     let entry = parseTrackEntry(spelled)
     if spelled.len > 0 and entry.name.len == 0:
-      raise strayMarker(line, path)
+      return err(strayMarker(line, path))
     if entry.name.len > 0:
       let problem = trackNameProblem(entry.name)
       if problem.len > 0:
-        raise newException(
-          IOError,
+        return err(
           "Invalid track name '" & entry.name & "' for package '" & packageName & "' in " &
-            path & ": a track name " & problem & ".",
+            path & ": a track name " & problem & "."
         )
-    result.byPackage[packageName] = entry
+    selection.byPackage[packageName] = entry
+  ok(selection)
 
-proc readTracks*(repoRoot: string): TrackSelection =
+proc readTracks*(repoRoot: string): Result[TrackSelection, string] =
   ## A missing or empty file means no package is on a track.
   let path = trackPath(repoRoot)
   if not fileAt(path):
-    return TrackSelection()
-  parseTrackSelection(readFileContents(path), path)
+    return ok(TrackSelection())
+  parseTrackSelection(?readFileContents(path), path)
 
 func renderTrackSelection*(selection: TrackSelection): string =
   ## Sorted, because this file is committed: a table's own order would reshuffle
@@ -163,14 +160,15 @@ func renderTrackSelection*(selection: TrackSelection): string =
     else:
       result.add(packageName & " =\n")
 
-proc writeTracks*(repoRoot: string, selection: TrackSelection) =
+proc trackEffects*(repoRoot: string, selection: TrackSelection): Effects =
   let path = trackPath(repoRoot)
-  makeDirectory(path.parentDir())
-  writeFileContents(path, renderTrackSelection(selection))
+  @[createDirectory(path.parentDir()), writeTo(path, renderTrackSelection(selection))]
 
-proc clearTracks*(repoRoot: string) =
+proc clearTrackEffects*(repoRoot: string): Effects =
   ## Deleting rather than writing an empty file: absence is what "no track"
   ## means, and a file holding nothing would read as something half-said.
   let path = trackPath(repoRoot)
   if fileAt(path):
-    deleteFile(path)
+    @[deleteAt(path)]
+  else:
+    @[]

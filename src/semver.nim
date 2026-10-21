@@ -4,7 +4,8 @@
 ## Terminology, used throughout nimver: a *version* is anything `bump` tags; a
 ## *release* is a version with no track; a *prerelease* is a version with one.
 
-import std/strutils
+import std/[strutils, sugar]
+import results
 
 type
   BumpLevel* = enum
@@ -83,15 +84,13 @@ func parseTrackSuffix(suffix: string): tuple[track: string, iteration: int] =
   let name = suffix[0 ..< dot]
   if not name.allCharsInSet(TrackNameChars):
     return ("", 0)
-  try:
-    let iteration = parseInt(suffix[dot + 1 .. ^1])
-    if iteration < 1:
-      return ("", 0)
-    (name, iteration)
-  except ValueError:
-    ("", 0)
+  let iteration = catch(parseInt(suffix[dot + 1 .. ^1])).valueOr:
+    return ("", 0)
+  if iteration < 1:
+    return ("", 0)
+  (name, iteration)
 
-proc parseSemVer*(s: string): SemVer =
+proc parseSemVer*(s: string): Result[SemVer, string] =
   ## Parses the `major.minor.patch` core of a version string, keeping a
   ## `-<track>.<iteration>` suffix and dropping build metadata (`+...`) and any
   ## other prerelease spelling.
@@ -104,12 +103,15 @@ proc parseSemVer*(s: string): SemVer =
       withoutBuild[0 ..< dash]
   let parts = core.split('.')
   if parts.len != 3:
-    raise newException(ValueError, "Invalid semantic version: " & s)
-  result = SemVer(
-    major: parseInt(parts[0]), minor: parseInt(parts[1]), patch: parseInt(parts[2])
+    return err("Invalid semantic version: " & s)
+  var version = SemVer(
+    major: ?catch(parseInt(parts[0])).mapErr(e => e.msg),
+    minor: ?catch(parseInt(parts[1])).mapErr(e => e.msg),
+    patch: ?catch(parseInt(parts[2])).mapErr(e => e.msg),
   )
   if dash != -1:
-    (result.track, result.iteration) = parseTrackSuffix(withoutBuild[dash + 1 .. ^1])
+    (version.track, version.iteration) = parseTrackSuffix(withoutBuild[dash + 1 .. ^1])
+  ok(version)
 
 proc bump*(v: SemVer, level: BumpLevel): SemVer =
   ## Always yields a release: a track is put back on afterwards, by whoever
@@ -134,17 +136,17 @@ proc `$`*(level: BumpLevel): string =
   of blNone: "none"
   of blIgnore: "ignore"
 
-proc parseBumpLevel*(s: string): BumpLevel =
+proc parseBumpLevel*(s: string): Result[BumpLevel, string] =
   case s.strip().toLowerAscii()
   of "major":
-    blMajor
+    ok(blMajor)
   of "minor":
-    blMinor
+    ok(blMinor)
   of "patch":
-    blPatch
+    ok(blPatch)
   of "none":
-    blNone
+    ok(blNone)
   of "ignore":
-    blIgnore
+    ok(blIgnore)
   else:
-    raise newException(ValueError, "Invalid bump level: " & s)
+    err("Invalid bump level: " & s)

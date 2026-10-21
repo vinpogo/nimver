@@ -7,3 +7,6 @@ tests/test_*
 dist/
 /bin/
 node_modules/
+nimble.develop
+nimble.paths
+nimbledeps

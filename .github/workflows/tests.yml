@@ -20,6 +20,12 @@ jobs:
           nim-version: "2.2.12"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Fetch dependencies
+        # Writes nimble.paths, which config.nims hands to the plain `nim`
+        # invocations below: with a lock file present, nim does not search the
+        # nimble package directory by itself.
+        run: nimble setup -y
+
       - name: Build nimver
         run: nimble build -y
 
@@ -53,6 +59,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
+
+      - name: Fetch dependencies
+        # Writes nimble.paths, which config.nims hands to the plain `nim`
+        # invocations below: with a lock file present, nim does not search the
+        # nimble package directory by itself.
+        run: nimble setup -y
 
       - name: Build the Node bundle
         run: nimble buildJs -y
