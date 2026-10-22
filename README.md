@@ -188,8 +188,9 @@ The default types are:
 feat = minor
 fix = patch
 perf = patch
-refactor = patch
 revert = patch
+ref = none
+refactor = none
 docs = none
 style = none
 chore = none
