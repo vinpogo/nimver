@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.3.1-beta.6] - 2026-10-22
+
+### Commits
+- fix(ci): fix npm publish job
+
 ## [5.3.1-beta.5] - 2026-10-22
 
 ### Commits
