@@ -1,5 +1,11 @@
 # Changelog
 
+## [5.3.1-beta.5] - 2026-10-22
+
+### Commits
+- ci: smoke test npm packages on build runners
+- ref: add declarative command parsing
+
 ## [5.3.1-beta.4] - 2026-10-21
 
 ### Commits
