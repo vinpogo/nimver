@@ -38,6 +38,9 @@ itself is past 1.0.0, so its own releases are unaffected by that holding.
 - After cloning, run `nimble setup`: with `nimble.lock` present, a plain `nim c`
   finds the `results` dependency only through the `nimble.paths` it writes.
 
+- A variable or parameter that holds an `Option` is named `maybe<Thing>`:
+  `maybeOption`, `maybePackageName`. Procs keep being named after the value
+  they return (`named`, `matching`) and fields keep plain names.
 - Avoid writing comments unless they are necessary. Always prefer readable code over comments.
 - Format Nim with nph before committing: `nph <files>`.
 - Do not trust the exit status: nimble exits 0 even when a suite fails

@@ -67,7 +67,7 @@ git push --follow-tags # pushes the release commit together with its tags
 
 ```sh
 nimver changelog 1.2.0       # or v1.2.0, or a prerelease: 1.3.0-rc.1
-nimver changelog web 1.2.0   # in an independent monorepo, name the package
+nimver changelog 1.2.0 web   # in an independent monorepo, name the package
 ```
 
 ## Below 1.0.0
@@ -267,10 +267,10 @@ refuses `--package`.
 nimver init
 nimver install-hooks [--force]
 nimver bump [<package>] [--dry-run] [--stable]
-nimver changelog [<package>] <version>
+nimver changelog <version> [<package>]
 nimver track
-nimver track enter <name> [--package <name>] [--stable]
-nimver track exit [--package <name>]
+nimver track enter <name> [--package <package>] [--stable]
+nimver track exit [--package <package>]
 nimver version
 
 Invoked by the installed hook (not usually run by hand):

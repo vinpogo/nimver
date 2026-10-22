@@ -68,15 +68,15 @@ suite "changelog":
     discard commitFile(dir, "packages/both/beta/b.nim", "echo 2\n", "fix: patch beta")
     check run("nimver bump", dir).code == 0
 
-    let (alpha, alphaCode) = run("nimver changelog alpha 1.1.0", dir)
+    let (alpha, alphaCode) = run("nimver changelog 1.1.0 alpha", dir)
     check alphaCode == 0
     check alpha == "### Commits\n- chore: configure workspace\n- feat: add alpha\n"
 
-    let (beta, betaCode) = run("nimver changelog beta 1.0.1", dir)
+    let (beta, betaCode) = run("nimver changelog 1.0.1 beta", dir)
     check betaCode == 0
     check beta == "### Commits\n- chore: configure workspace\n- fix: patch beta\n"
 
-    let (output, code) = run("nimver changelog beta 1.1.0", dir)
+    let (output, code) = run("nimver changelog 1.1.0 beta", dir)
     check code != 0
     check "no entry for beta 1.1.0 in packages/both/CHANGELOG.md" in output
 
@@ -88,7 +88,7 @@ suite "changelog":
 
   test "an unknown package is refused":
     let dir = freshSiblingWorkspaceRepo("changelog-siblings-unknown")
-    let (output, code) = run("nimver changelog gamma 1.0.0", dir)
+    let (output, code) = run("nimver changelog 1.0.0 gamma", dir)
     check code != 0
     check "Unknown package 'gamma'" in output
 
@@ -98,11 +98,11 @@ suite "changelog":
     discard commitFile(dir, "packages/cli/a.nim", "echo 1\n", "fix: mend cli")
     check run("nimver bump", dir).code == 0
 
-    let (web, webCode) = run("nimver changelog web 1.1.0", dir)
+    let (web, webCode) = run("nimver changelog 1.1.0 web", dir)
     check webCode == 0
     check web == "### Commits\n- chore: configure workspace\n- feat: add web\n"
 
-    let (cli, cliCode) = run("nimver changelog cli 1.0.1", dir)
+    let (cli, cliCode) = run("nimver changelog 1.0.1 cli", dir)
     check cliCode == 0
     check cli == "### Commits\n- chore: configure workspace\n- fix: mend cli\n"
 
@@ -115,7 +115,7 @@ suite "changelog":
     check code == 0
     check output == "### Commits\n- chore: configure workspace\n- feat: add web\n"
 
-    let (refused, refusedCode) = run("nimver changelog web 1.1.0", dir)
+    let (refused, refusedCode) = run("nimver changelog 1.1.0 web", dir)
     check refusedCode != 0
     check "strategy is 'fixed'" in refused
 

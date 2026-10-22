@@ -197,7 +197,20 @@ suite "saying which track you are on":
   test "enter needs a name, and an unknown subcommand is refused":
     let dir = freshRepo("track-usage")
     check setTrack(dir, "enter").code != 0
-    check "Unknown track command" in setTrack(dir, "sideways").output
+    check "unknown command 'sideways' for `nimver track`" in
+      setTrack(dir, "sideways").output
+
+  test "-p names the package a track is for":
+    let dir = freshWorkspaceRepo("track-short-package", strategy = "independent")
+    check setTrack(dir, "enter alpha -p web").code == 0
+    check "web: track 'alpha'" in setTrack(dir, "").output
+
+  test "--package without a name is refused, and puts nobody on the track":
+    let dir = freshWorkspaceRepo("track-empty-package", strategy = "independent")
+    let (output, code) = setTrack(dir, "enter alpha --package")
+    check code == 1
+    check "`--package` needs a <package>" in output
+    check not fileExists(dir / ".nimver" / "track")
 
   test "entering a track does not by itself make anything releasable":
     # The track file is nimver's own bookkeeping. Counted as a change it would
@@ -412,7 +425,7 @@ suite "promoting to 1.0.0 on a track":
 
     let refused = setTrack(dir, "exit --stable")
     check refused.code != 0
-    check "`track exit` cuts none" in refused.output
+    check "unknown option '--stable' for `nimver track exit`" in refused.output
     check readFile(dir / ".nimver" / "track").strip() == "rc!"
 
   test "the track report and the bump warning both say it is heading for 1.0.0":

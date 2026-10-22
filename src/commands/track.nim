@@ -1,4 +1,4 @@
-import std/[algorithm, options, sequtils, strutils, tables]
+import std/[algorithm, options, sequtils, tables]
 import ../sysio
 import results
 import ../effects
@@ -8,43 +8,6 @@ import ../history
 import ../semver
 import ../workspace
 import ../adapters/manifest
-
-type TrackArguments = object
-  subcommand: string
-  trackName: string
-  packageName: Option[string]
-  stable: bool
-
-proc parseArguments(arguments: seq[string]): Result[TrackArguments, string] =
-  ## `--package <name>` / `-p <name>` rather than a positional, because
-  ## `nimver track enter alpha web` would read as two track names.
-  var parsed: TrackArguments
-  var positional: seq[string] = @[]
-  var index = 0
-  while index < arguments.len:
-    let argument = arguments[index]
-    if argument in ["--package", "-p"]:
-      if index + 1 >= arguments.len:
-        return err("`" & argument & "` needs a package name")
-      parsed.packageName = some(arguments[index + 1])
-      index += 2
-      continue
-    if argument == "--stable":
-      parsed.stable = true
-      index += 1
-      continue
-    if argument.startsWith("-"):
-      return err("Unknown option '" & argument & "' for `nimver track`")
-    positional.add(argument)
-    index += 1
-
-  if positional.len > 0:
-    parsed.subcommand = positional[0]
-  if positional.len > 2:
-    return err("`nimver track " & parsed.subcommand & "` takes at most one name")
-  if positional.len == 2:
-    parsed.trackName = positional[1]
-  ok(parsed)
 
 proc tagShape(trackName: string): string =
   if trackName.len > 0:
@@ -143,80 +106,72 @@ proc warnWithoutARelease(
       )
   ok()
 
-proc enterTrack(
-    repoRoot: string, arguments: TrackArguments, effects: var Effects
+proc cmdTrackEnter*(
+    repoRoot: string,
+    trackName: string,
+    packageName: Option[string],
+    stable: bool,
+    effects: var Effects,
 ): Result[void, string] =
-  if arguments.trackName.len == 0:
-    return err("Usage: nimver track enter <name> [--package <name>]")
-
-  let problem = trackNameProblem(arguments.trackName)
+  ?requireConfigured(repoRoot)
+  let problem = trackNameProblem(trackName)
   if problem.len > 0:
     return err(
-      "Invalid track name '" & arguments.trackName & "': a track name " & problem &
-        ". It becomes the tag suffix `v1.2.3-" & arguments.trackName &
+      "Invalid track name '" & trackName & "': a track name " & problem &
+        ". It becomes the tag suffix `v1.2.3-" & trackName &
         ".1` and the track written into the manifest version."
     )
 
   # The whole track is compared, not just its name: `enter rc --stable` while
   # already on a plain `rc` has something to record, and `enter rc` after it
   # takes the promise back.
-  let entering = Track(name: arguments.trackName, promotesToStable: arguments.stable)
+  let entering = Track(name: trackName, promotesToStable: stable)
 
   var selection = ?readTracks(repoRoot)
-  if arguments.packageName.isSome:
-    let package = ?checkedPackage(repoRoot, arguments.packageName.get, effects)
+  if packageName.isSome:
+    let package = ?checkedPackage(repoRoot, packageName.get, effects)
     if selection.trackFor(package.name) == entering:
       effects.add(
-        say(
-          "Package '" & package.name & "' is already on track '" & arguments.trackName &
-            "'."
-        )
+        say("Package '" & package.name & "' is already on track '" & trackName & "'.")
       )
       return ok()
     selection.byPackage[package.name] = entering
     effects.add(trackEffects(repoRoot, selection))
     effects.add(
       say(
-        "Package '" & package.name & "' is on track '" & arguments.trackName &
-          "'. Its next bump tags <package>-" & tagShape(arguments.trackName) & "."
+        "Package '" & package.name & "' is on track '" & trackName &
+          "'. Its next bump tags <package>-" & tagShape(trackName) & "."
       )
     )
   else:
     if selection.default == entering:
-      effects.add(say("Already on track '" & arguments.trackName & "'."))
+      effects.add(say("Already on track '" & trackName & "'."))
       return ok()
     selection.default = entering
     effects.add(trackEffects(repoRoot, selection))
     effects.add(
       say(
-        "On track '" & arguments.trackName & "'. The next bump tags " &
-          tagShape(arguments.trackName) & "."
+        "On track '" & trackName & "'. The next bump tags " & tagShape(trackName) & "."
       )
     )
 
-  if arguments.stable:
+  if stable:
     effects.add(
       say(
         "Entered with --stable: the first version cut on this track is 1.0.0, so no further flag is needed."
       )
     )
-  discard warnWithoutARelease(repoRoot, arguments.packageName, effects)
+  discard warnWithoutARelease(repoRoot, packageName, effects)
   effects.add(say("Commit " & TrackRelPath & " so CI releases on the same track."))
   ok()
 
-proc exitTrack(
-    repoRoot: string, arguments: TrackArguments, effects: var Effects
+proc cmdTrackExit*(
+    repoRoot: string, packageName: Option[string], effects: var Effects
 ): Result[void, string] =
-  if arguments.trackName.len > 0:
-    return err("Usage: nimver track exit [--package <name>]")
-  if arguments.stable:
-    return err(
-      "`--stable` says which version the next bump cuts, and `track exit` cuts none. Drop it, or run `nimver bump --stable` when you are ready for 1.0.0."
-    )
-
+  ?requireConfigured(repoRoot)
   var selection = ?readTracks(repoRoot)
-  if arguments.packageName.isSome:
-    let package = ?checkedPackage(repoRoot, arguments.packageName.get, effects)
+  if packageName.isSome:
+    let package = ?checkedPackage(repoRoot, packageName.get, effects)
     # Written as an empty override rather than removed: with a repo-wide
     # default standing, removing the line would put the package back on it.
     selection.byPackage[package.name] = noTrack()
@@ -237,24 +192,6 @@ proc exitTrack(
   effects.add(say("Commit " & TrackRelPath & " so CI releases the same way."))
   ok()
 
-proc cmdTrack*(
-    repoRoot: string, arguments: seq[string], effects: var Effects
-): Result[void, string] =
-  let parsed = ?parseArguments(arguments)
-  case parsed.subcommand
-  of "":
-    if parsed.stable:
-      return err(
-        "`--stable` belongs on `nimver track enter <name>`; `nimver track` only says which track you are on."
-      )
-    effects.add(reportTracks(?readTracks(repoRoot)))
-    ok()
-  of "enter":
-    ?requireConfigured(repoRoot)
-    enterTrack(repoRoot, parsed, effects)
-  of "exit":
-    ?requireConfigured(repoRoot)
-    exitTrack(repoRoot, parsed, effects)
-  else:
-    return
-      err("Unknown track command '" & parsed.subcommand & "'. Expected enter or exit.")
+proc cmdTrackStatus*(repoRoot: string, effects: var Effects): Result[void, string] =
+  effects.add(reportTracks(?readTracks(repoRoot)))
+  ok()
