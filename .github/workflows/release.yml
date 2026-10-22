@@ -60,9 +60,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           if [ -n "${{ steps.track.outputs.name }}" ]; then
-            npm publish package/vingy-nimver-*.tgz --provenance --access public --tag "${{ steps.track.outputs.name }}"
+            npm publish ./package/vingy-nimver-*.tgz --provenance --access public --tag "${{ steps.track.outputs.name }}"
           else
-            npm publish package/vingy-nimver-*.tgz --provenance --access public
+            npm publish ./package/vingy-nimver-*.tgz --provenance --access public
           fi
 
   publish:
