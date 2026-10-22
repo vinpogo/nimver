@@ -1,5 +1,20 @@
 # Changelog
 
+## [5.3.1] - 2026-10-22
+
+### Commits
+- ref(npm): ship prebuilt native binaries
+- fix: preserve legacy hook entry point
+- fix(manifests): release manifests linked to files
+- ci(release): smoke test npm packages on all platforms
+- fix: stage linked release files safely
+- ci: test npm packages across platforms on main
+- ref: remove support for symlinked manifests
+- ci: smoke test npm packages on build runners
+- ref: add declarative command parsing
+- fix(ci): fix npm publish job
+- ref(config): change commit types
+
 ## [5.3.1-beta.6] - 2026-10-22
 
 ### Commits

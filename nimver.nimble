@@ -1,6 +1,6 @@
 # Package
 
-version       = "5.3.1-beta.6"
+version       = "5.3.1"
 author        = "vingy"
 description   = "A package to manage semantic versioning from commit messages"
 license       = "MIT"
