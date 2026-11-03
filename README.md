@@ -19,6 +19,14 @@ From Nimble:
 nimble install nimver
 ```
 
+From Nix (flakes, Linux and Apple silicon macOS):
+
+```sh
+nix profile add github:vinpogo/nimver   # or try it first: nix run github:vinpogo/nimver -- --version
+```
+
+The flake also exposes `overlays.default`, for adding `nimver` to a NixOS or home-manager configuration. Install nimver persistently before running `nimver install-hooks`: the hook falls back to the binary's store path, which garbage collection removes after a one-off `nix run`.
+
 Or grab a prebuilt binary for your platform from the [releases page](https://github.com/vinpogo/nimver/releases) and put it on your `PATH`. The binary has no runtime dependencies beyond `git`.
 
 ## Setup (per repository)

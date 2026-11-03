@@ -44,6 +44,18 @@ jobs:
             exit 1
           fi
 
+  nix:
+    # Builds the flake's package, which runs every suite again inside the Nix
+    # sandbox, and checks that flake.nix pins the results commit nimble.lock does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+
+      - name: Check the flake
+        run: nix flake check -L
+
   npm:
     # A pull request smoke tests the package on Linux only; main gets every
     # platform from `package`.

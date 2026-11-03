@@ -9,3 +9,6 @@ node_modules/
 nimble.develop
 nimble.paths
 nimbledeps
+result
+result-*
+.direnv/
