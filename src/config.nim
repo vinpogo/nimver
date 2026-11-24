@@ -41,7 +41,9 @@ type
 
   PackageConfig* = object
     name*: string
-    manifestPath*: string
+    manifestPaths*: seq[string]
+      ## Every file that carries the package's version. The first is the
+      ## package's home: its directory decides attribution and the changelog.
     sourceFilePatterns*: Option[seq[string]] = none(seq[string])
 
   NimverConfig* = object
@@ -97,12 +99,13 @@ proc validateWorkspaceConfig(config: NimverConfig, path: string): Result[void, s
           nameProblem & ". It is released as the tag `" & package.name &
           "-v1.2.3` and names itself in the release commit."
       )
-    if package.manifestPath.len == 0:
+    if package.manifestPaths.len == 0:
       return err("Package '" & package.name & "' is missing manifest in " & path)
     if seenNames.containsOrIncl(package.name):
       return err("Duplicate package '" & package.name & "' in " & path)
-    if seenManifests.containsOrIncl(package.manifestPath):
-      return err("Duplicate package manifest '" & package.manifestPath & "' in " & path)
+    for manifestPath in package.manifestPaths:
+      if seenManifests.containsOrIncl(manifestPath):
+        return err("Duplicate package manifest '" & manifestPath & "' in " & path)
   ok()
 
 proc getValue(userConfig: Config, section, key: string): Option[string] =
@@ -149,7 +152,7 @@ proc parsedOr[T](
   else:
     ok(default)
 
-func parseSourceFilePatterns(raw: string): seq[string] =
+func parseList(raw: string): seq[string] =
   raw.split(',').mapIt(it.strip()).filterIt(it.len > 0)
 
 proc parseTypes(userConfig: Config): Result[Table[string, BumpLevel], string] =
@@ -165,9 +168,10 @@ proc parsePackages(userConfig: Config): seq[PackageConfig] =
       if section.startsWith(PackagePrefix):
         PackageConfig(
           name: section[PackagePrefix.len .. ^1].strip(),
-          manifestPath: userConfig.getValue(section, ManifestKey).get(""),
+          manifestPaths:
+            userConfig.getValue(section, ManifestKey).map(parseList).get(@[]),
           sourceFilePatterns:
-            userConfig.getValue(section, SourceFilesKey).map(parseSourceFilePatterns),
+            userConfig.getValue(section, SourceFilesKey).map(parseList),
         )
 
 proc parseConfig*(contents, path: string): Result[NimverConfig, string] =

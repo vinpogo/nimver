@@ -23,6 +23,8 @@ proc testPackage*(
     name: name,
     manifest: manifestAt(manifestRelativePath),
     manifestRelativePath: manifestRelativePath,
+    manifests: @[manifestAt(manifestRelativePath)],
+    manifestRelativePaths: @[manifestRelativePath],
     rootDirectory: rootDirectoryOf(manifestRelativePath),
     sourceFilePatterns: sourceFiles,
   )

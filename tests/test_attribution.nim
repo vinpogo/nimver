@@ -218,8 +218,8 @@ suite "layout from detected manifests":
   test "declared packages are used as given, ignoring what was detected":
     let declared = NimverConfig(
       packages: @[
-        PackageConfig(name: "web", manifestPath: "./packages/web/package.json"),
-        PackageConfig(name: "cli", manifestPath: "packages/cli/cli.nimble"),
+        PackageConfig(name: "web", manifestPaths: @["./packages/web/package.json"]),
+        PackageConfig(name: "cli", manifestPaths: @["packages/cli/cli.nimble"]),
       ]
     )
     let layout = workspaceLayout("/repo", declared, @["stray.nimble"])

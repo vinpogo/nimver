@@ -145,11 +145,16 @@ func knownKeys(section: string): seq[string] =
   else:
     NoKeys # `[types]`, whose keys are the commit types the repository uses.
 
-proc checkUnquotedGlobs(userConfig: Config, path: string): Result[void, string] =
-  ## Checked before anything else about a key: an unquoted `*` in a *value*
-  ## lexes into a key of its own, and "unknown key `*`" would be a riddle.
+proc checkUnquotedValues(userConfig: Config, path: string): Result[void, string] =
+  ## Checked before anything else about a key: an unquoted `*` or `,` in a
+  ## *value* lexes into a key of its own, and "unknown key `*`" would be a riddle.
   for _, keys in userConfig.pairs():
     for key in keys.keys():
+      if key.startsWith(','):
+        return err(
+          "Unquoted list in " & path &
+            ": a value with commas has to be quoted, as in manifest = \"packages/zed/package.json, packages/zed/Cargo.toml\""
+        )
       if '*' in key:
         return err(
           "Unquoted `*` in " & path &
@@ -199,7 +204,7 @@ proc readConfigTable*(contents, path: string): Result[Config, string] =
   ## The sections and settings a configuration file holds, once it is known to
   ## hold nothing else.
   let table = ?loadConfigTable(contents.normalized(), path)
-  ?table.checkUnquotedGlobs(path)
+  ?table.checkUnquotedValues(path)
   for section, keys in table.pairs():
     ?checkSection(section, keys, path)
   ok(table)

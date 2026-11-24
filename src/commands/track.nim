@@ -7,7 +7,6 @@ import ../track
 import ../history
 import ../semver
 import ../workspace
-import ../adapters/manifest
 
 proc tagShape(trackName: string): string =
   if trackName.len > 0:
@@ -89,9 +88,9 @@ proc warnWithoutARelease(
     if sinceRelease.boundaryVersion.isNone():
       let tagExample =
         if namespaced:
-          "git tag " & package.name & "-v" & $(?readVersion(package.manifest))
+          "git tag " & package.name & "-v" & $(?currentVersion(package))
         else:
-          "git tag v" & $(?readVersion(package.manifest))
+          "git tag v" & $(?currentVersion(package))
       effects.add(
         warn(
           "nimver: " & (

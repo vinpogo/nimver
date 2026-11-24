@@ -166,7 +166,9 @@ proc snapshotAt(
     else:
       (
         ?gitPathsAtRevision(
-          repoRoot, revision, snapshot.workspace.packages.mapIt(it.manifestRelativePath)
+          repoRoot,
+          revision,
+          snapshot.workspace.packages.mapIt(it.manifestRelativePaths).concat(),
         )
       ).len == 0
   ok(snapshot)
@@ -184,7 +186,7 @@ proc changesTheSetup(snapshot: Snapshot, record: CommitRecord): bool =
       # Only a root entry can be part of the root listing.
       if '/' notin path and rootManifestNames(@[path]).len > 0:
         return true
-    elif snapshot.workspace.packages.anyIt(it.manifestRelativePath == path):
+    elif snapshot.workspace.packages.anyIt(path in it.manifestRelativePaths):
       return true
   false
 

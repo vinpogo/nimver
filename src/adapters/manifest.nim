@@ -1,17 +1,19 @@
 ## Detects a supported project manifest and dispatches version operations to
-## the corresponding ecosystem adapter.
+## the adapter for its format: a `.nimble` file, JSON or TOML.
 
-import std/[algorithm, strutils, sequtils]
+import std/[algorithm, options, strutils, sequtils]
 import results
 import ../sysio
 import ./nimble
-import ./packagejson
+import ./jsonmanifest
+import ./toml
 import ../semver
 
 type
   ManifestKind* = enum
     mkNimble
-    mkPackageJson
+    mkJson
+    mkToml
 
   ProjectManifest* = object
     manifestKind*: ManifestKind
@@ -19,18 +21,31 @@ type
 
 proc displayName*(manifest: ProjectManifest): string =
   case manifest.manifestKind
-  of mkNimble: "Nimble"
-  of mkPackageJson: "package.json"
+  of mkNimble:
+    "Nimble"
+  of mkJson, mkToml:
+    manifest.filePath.extractFilename()
+
+func manifestKindOf(filePath: string): Option[ManifestKind] =
+  if filePath.endsWith(".nimble"):
+    some(mkNimble)
+  elif filePath.endsWith(".json"):
+    some(mkJson)
+  elif filePath.endsWith(".toml"):
+    some(mkToml)
+  else:
+    none(ManifestKind)
 
 proc manifestFromPath*(filePath: string): Result[ProjectManifest, string] =
   if not fileAt(filePath):
     return err("Manifest not found at " & filePath)
-  if filePath.endsWith(".nimble"):
-    ok(ProjectManifest(manifestKind: mkNimble, filePath: filePath))
-  elif filePath.extractFilename() == "package.json":
-    ok(ProjectManifest(manifestKind: mkPackageJson, filePath: filePath))
-  else:
-    err("Unsupported project manifest: " & filePath)
+  let maybeKind = manifestKindOf(filePath)
+  if maybeKind.isNone:
+    return err(
+      "Unsupported project manifest: " & filePath &
+        ". A manifest is a .nimble, .json or .toml file."
+    )
+  ok(ProjectManifest(manifestKind: maybeKind.get, filePath: filePath))
 
 proc rootManifestNames*(entryNames: seq[string]): seq[string] =
   ## The supported manifests among the names of a repository root's entries, in
@@ -50,10 +65,9 @@ proc manifestAt*(filePath: string): ProjectManifest =
   ## The manifest a path names, going by the name alone. Unlike
   ## `manifestFromPath` this does not require the file to be there, which a
   ## past commit's manifest need no longer be.
-  if filePath.endsWith(".nimble"):
-    ProjectManifest(manifestKind: mkNimble, filePath: filePath)
-  else:
-    ProjectManifest(manifestKind: mkPackageJson, filePath: filePath)
+  ProjectManifest(
+    manifestKind: manifestKindOf(filePath).get(mkJson), filePath: filePath
+  )
 
 proc findRootManifests*(repoRoot: string): Result[seq[ProjectManifest], string] =
   ## Every supported manifest sitting directly in the repository root, in a
@@ -66,8 +80,10 @@ proc readVersion*(manifest: ProjectManifest): Result[SemVer, string] =
   case manifest.manifestKind
   of mkNimble:
     nimble.readVersion(manifest.filePath)
-  of mkPackageJson:
-    readPackageVersion(manifest.filePath)
+  of mkJson:
+    readJsonVersion(manifest.filePath)
+  of mkToml:
+    readTomlVersion(manifest.filePath)
 
 proc versionWritten*(
     manifest: ProjectManifest, newVersion: SemVer
@@ -77,5 +93,7 @@ proc versionWritten*(
   case manifest.manifestKind
   of mkNimble:
     nimble.versionWritten(manifest.filePath, newVersion)
-  of mkPackageJson:
-    packageVersionWritten(manifest.filePath, newVersion)
+  of mkJson:
+    jsonVersionWritten(manifest.filePath, newVersion)
+  of mkToml:
+    tomlVersionWritten(manifest.filePath, newVersion)

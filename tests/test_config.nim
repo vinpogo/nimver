@@ -125,10 +125,10 @@ manifest = packages/cli/cli.nimble
     ).value
     check parsed.packages.len == 2
     check parsed.packages[0].name == "web"
-    check parsed.packages[0].manifestPath == "packages/web/package.json"
+    check parsed.packages[0].manifestPaths == @["packages/web/package.json"]
     check parsed.packages[0].sourceFilePatterns.isNone
     check parsed.packages[1].name == "cli"
-    check parsed.packages[1].manifestPath == "packages/cli/cli.nimble"
+    check parsed.packages[1].manifestPaths == @["packages/cli/cli.nimble"]
 
   test "a scoped npm name needs no quoting, the way it is written in package.json":
     let parsed = parseConfig(
@@ -140,7 +140,7 @@ manifest = packages/widgets/package.json
     ).value
     check parsed.packages.len == 1
     check parsed.packages[0].name == "@acme/widgets"
-    check parsed.packages[0].manifestPath == "packages/widgets/package.json"
+    check parsed.packages[0].manifestPaths == @["packages/widgets/package.json"]
 
   test "a scoped section does not swallow the rest of the file":
     # `loadConfig` answers a parse error by dropping everything after it, so a
@@ -240,7 +240,7 @@ manifest = packages/other/package.json
       "config.ini",
     ).value
     check parsed.packages.len == 1
-    check parsed.packages[0].manifestPath == "packages/other/package.json"
+    check parsed.packages[0].manifestPaths == @["packages/other/package.json"]
 
   test "sections differing only in the case of the package prefix are rejected":
     check parseConfig(

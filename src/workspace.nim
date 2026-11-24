@@ -6,12 +6,17 @@ import ./changes
 import ./config
 import ./track
 import ./adapters/manifest
+import ./semver
 
 type
   WorkspacePackage* = object
     name*: string
     manifest*: ProjectManifest
+      ## The package's home manifest, the first one the config names.
     manifestRelativePath*: string
+    manifests*: seq[ProjectManifest]
+      ## Every manifest carrying the package's version, the home one first.
+    manifestRelativePaths*: seq[string]
     rootDirectory*: string
       ## Repo-relative directory holding the manifest; empty at the repo root.
     sourceFilePatterns*: Option[seq[string]]
@@ -41,15 +46,17 @@ proc manifestRootDirectory(manifestRelativePath: string): string =
     manifestRelativePath[0 ..< lastSeparatorIndex]
 
 proc newWorkspacePackage(
-    name, manifestRelativePath: string,
-    manifest: ProjectManifest,
+    repoRoot, name: string,
+    manifestRelativePaths: seq[string],
     sourceFilePatterns: Option[seq[string]] = none[seq[string]](),
 ): WorkspacePackage =
   WorkspacePackage(
     name: name,
-    manifest: manifest,
-    manifestRelativePath: manifestRelativePath,
-    rootDirectory: manifestRootDirectory(manifestRelativePath),
+    manifest: manifestAt(repoRoot / manifestRelativePaths[0]),
+    manifestRelativePath: manifestRelativePaths[0],
+    manifests: manifestRelativePaths.mapIt(manifestAt(repoRoot / it)),
+    manifestRelativePaths: manifestRelativePaths,
+    rootDirectory: manifestRootDirectory(manifestRelativePaths[0]),
     sourceFilePatterns: sourceFilePatterns,
   )
 
@@ -129,11 +136,7 @@ proc workspaceLayout*(
           manifestName[0 ..< manifestName.len - ".nimble".len]
         else:
           "root"
-      result.packages.add(
-        newWorkspacePackage(
-          packageName, manifestName, manifestAt(repoRoot / manifestName)
-        )
-      )
+      result.packages.add(newWorkspacePackage(repoRoot, packageName, @[manifestName]))
 
     if detectedManifestNames.len > 1:
       # Nearest ancestor cannot tell siblings apart, so release them together
@@ -155,12 +158,11 @@ proc workspaceLayout*(
     return
 
   for packageConfig in config.packages:
-    let manifestRelativePath = normalizeRepoPath(packageConfig.manifestPath)
     result.packages.add(
       newWorkspacePackage(
+        repoRoot,
         packageConfig.name,
-        manifestRelativePath,
-        manifestAt(repoRoot / manifestRelativePath),
+        packageConfig.manifestPaths.mapIt(normalizeRepoPath(it)),
         packageConfig.sourceFilePatterns,
       )
     )
@@ -184,8 +186,23 @@ proc loadWorkspace*(
   if workspace.notice.len > 0:
     effects.add(warn(workspace.notice))
   for package in workspace.packages:
-    discard ?manifestFromPath(package.manifest.filePath)
+    for manifest in package.manifests:
+      discard ?manifestFromPath(manifest.filePath)
   ok(workspace)
+
+proc currentVersion*(package: WorkspacePackage): Result[SemVer, string] =
+  ## The version a package is on, which every one of its manifests has to
+  ## agree on: picking one of them would silently move the others.
+  let version = ?readVersion(package.manifest)
+  for manifest in package.manifests[1 .. ^1]:
+    let manifestVersion = ?readVersion(manifest)
+    if manifestVersion != version:
+      return err(
+        "The manifests of package '" & package.name & "' must have the same version: " &
+          package.manifest.filePath & " is " & $version & ", " & manifest.filePath &
+          " is " & $manifestVersion
+      )
+  ok(version)
 
 proc findPackage*(
     workspace: Workspace, name: string
@@ -247,7 +264,7 @@ proc owningPackageIndex(
     return ok(matchingPackageIndexes[0])
 
   for packageIndex, package in workspace.packages:
-    if changedPath == package.manifestRelativePath:
+    if changedPath in package.manifestRelativePaths:
       return ok(packageIndex)
 
   ok(workspace.nearestPackageIndex(changedPath))

@@ -113,3 +113,19 @@ proc findTopLevelValueSpan*(
     cursorIndex = parsedProperty.nextPropertyIndex
 
   err("Could not find top-level JSON property: " & targetPropertyName)
+
+proc findNestedValueSpan*(
+    sourceContent: string, propertyPath: openArray[string]
+): Result[SourceSpan, string] =
+  ## Finds a property value by its path of names through nested objects:
+  ## `["metadata", "version"]` is `{"metadata": {"version": ...}}`.
+  var span = SourceSpan(startIndex: 0, endIndex: sourceContent.len)
+  for propertyName in propertyPath:
+    let inner = ?findTopLevelValueSpan(
+      sourceContent[span.startIndex ..< span.endIndex], propertyName
+    )
+    span = SourceSpan(
+      startIndex: span.startIndex + inner.startIndex,
+      endIndex: span.startIndex + inner.endIndex,
+    )
+  ok(span)

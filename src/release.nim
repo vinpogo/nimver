@@ -294,13 +294,13 @@ proc planVersion(
   # repository of nothing but `chore:` commits would report nothing to bump and
   # then refuse the moment a `feat:` landed.
   if sinceRelease.boundaryVersion.isNone():
-    return err(noReleaseToBuildOn(naming, track, taggableVersion(@[package.manifest])))
+    return err(noReleaseToBuildOn(naming, track, taggableVersion(package.manifests)))
   release.level = highestBumpLevel(sinceRelease.entries.claimedBy(package))
 
   # Read before releasability for the same reason as the boundary above:
   # `--stable` releases with nothing pending, and a package that is already
   # stable has to be refused whether or not anything is waiting.
-  release.current = ?readVersion(package.manifest)
+  release.current = ?currentVersion(package)
   let base = baseVersionFor(sinceRelease, release.current)
   if intent == siRequested and release.current.isStable():
     return err(alreadyStable(naming, release.current))
@@ -338,7 +338,7 @@ proc planRelease*(
   ## release. A change touching two packages is therefore counted once for
   ## each, however far apart the two last went out - which is the whole point
   ## of releasing them independently.
-  var release = PackageRelease(name: package.name, manifests: @[package.manifest])
+  var release = PackageRelease(name: package.name, manifests: package.manifests)
   let naming =
     newReleaseNaming(package.name, projectWorkspace.releasesPackagesApart(), track)
   ?planVersion(
@@ -377,9 +377,9 @@ proc fixedReleaseNaming(projectWorkspace: Workspace, track: Track): ReleaseNamin
 proc sharedCurrentVersion(packages: seq[WorkspacePackage]): Result[SemVer, string] =
   ## The one version a fixed workspace is on. Manifests that disagree have to be
   ## reconciled by hand: picking one of them would silently move the others.
-  let shared = ?readVersion(packages[0].manifest)
+  let shared = ?currentVersion(packages[0])
   for package in packages[1 .. ^1]:
-    let packageVersion = ?readVersion(package.manifest)
+    let packageVersion = ?currentVersion(package)
     if packageVersion != shared:
       return err(
         "Fixed workspace manifests must have the same version: package '" &
@@ -399,7 +399,8 @@ proc planFixedRelease*(
   ## The whole repository moving at once: one version across every manifest, one
   ## changelog section at the repository root, one tag - and therefore one
   ## track, whatever any package might have asked for.
-  var release = PackageRelease(manifests: projectWorkspace.packages.mapIt(it.manifest))
+  var release =
+    PackageRelease(manifests: projectWorkspace.packages.mapIt(it.manifests).concat())
   let naming = fixedReleaseNaming(projectWorkspace, track)
   let notesBoundary = if track.hasTrack: vbAnyVersion else: vbRelease
   let notes = ?pendingChanges(repoRoot, currentConfig, naming, effects, notesBoundary)

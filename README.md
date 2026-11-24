@@ -104,8 +104,11 @@ You can also use tracks to transition from `0.x` to `1.x`. See [The 1.0.0 cycle]
 
 `nimver bump` currently supports:
 
-- `.nimble`
-- `package.json`
+- `.nimble`: the `version` field
+- `.json`: the top-level `version` (`package.json`), or `metadata.version` (`tree-sitter.json`)
+- `.toml`: a top-level `version` (a Zed `extension.toml`), or the one under `[package]` (`Cargo.toml`)
+
+For now, only `.nimble` files and `package.json` are auto-detected. Any other manifest has to be declared, see [Monorepos](#monorepos).
 
 ## Monorepos
 
@@ -126,6 +129,19 @@ sourceFiles = "src/cli/src/**"
 
 `sourceFiles` is optional per package, see [Change attribution](#change-attribution).
 
+### Multiple manifests per package
+
+A package can keep its version in more than one manifest. List them comma-separated, in quotes:
+
+```ini
+[package.cli]
+manifest = "packages/cli/cli.nimble, packages/cli/Cargo.toml"
+```
+
+- The first manifest is the main one: its directory is the package's directory for [Change attribution](#change-attribution) and [Changelogs](#changelogs).
+- A change to any listed manifest belongs to the package.
+- `bump` updates all of them in the same release commit.
+- All manifests must be on the same version; otherwise `bump` fails without changing anything.
 
 ### Strategy
 
