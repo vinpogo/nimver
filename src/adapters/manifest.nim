@@ -47,6 +47,11 @@ proc manifestFromPath*(filePath: string): Result[ProjectManifest, string] =
     )
   ok(ProjectManifest(manifestKind: maybeKind.get, filePath: filePath))
 
+const KnownManifestNames =
+  ["package.json", "tree-sitter.json", "Cargo.toml", "extension.toml"]
+  ## The JSON and TOML manifests found in a repository root by name. Their
+  ## extensions alone would also find configuration files without a version.
+
 proc rootManifestNames*(entryNames: seq[string]): seq[string] =
   ## The supported manifests among the names of a repository root's entries, in
   ## a stable order. Taking names rather than reading a directory is what lets a
@@ -58,8 +63,9 @@ proc rootManifestNames*(entryNames: seq[string]): seq[string] =
   sort(nimbleManifestNames)
 
   result = nimbleManifestNames
-  if "package.json" in entryNames:
-    result.add("package.json")
+  for knownName in KnownManifestNames:
+    if knownName in entryNames:
+      result.add(knownName)
 
 proc manifestAt*(filePath: string): ProjectManifest =
   ## The manifest a path names, going by the name alone. Unlike

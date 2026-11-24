@@ -80,6 +80,37 @@ suite "manifest adapters":
     let (subject, _) = run("git log -1 --pretty=%s", dir)
     check subject.strip() == "version: v1.0.1"
 
+  test "every known manifest in the root is found, other JSON and TOML is not":
+    # A grammar repository keeps its version in package.json and in
+    # tree-sitter.json; bumping only one would leave them apart.
+    let dir = freshPackageRepo("sibling-known-manifests")
+    writeFile(dir / "tree-sitter.json", "{\"metadata\": {\"version\": \"1.0.0\"}}\n")
+    writeFile(dir / "Cargo.toml", "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n")
+    writeFile(dir / "tsconfig.json", "{}\n")
+    writeFile(dir / "rustfmt.toml", "edition = \"2021\"\n")
+    discard commitFile(dir, "index.js", "export {}\n", "fix: patch")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "found 3 manifests" in output
+    check "tsconfig.json" notin output
+    check "\"version\": \"1.0.1\"" in readFile(dir / "package.json")
+    check "\"version\": \"1.0.1\"" in readFile(dir / "tree-sitter.json")
+    check "version = \"1.0.1\"" in readFile(dir / "Cargo.toml")
+    check readFile(dir / "rustfmt.toml") == "edition = \"2021\"\n"
+
+  test "a lone Cargo.toml is found like a lone package.json":
+    let dir = freshPackageRepo("lone-cargo-toml")
+    removeFile(dir / "package.json")
+    writeFile(dir / "Cargo.toml", "[package]\nname = \"pkg\"\nversion = \"1.0.0\"\n")
+    discard commitFile(dir, "main.rs", "fn main() {}\n", "feat: add main")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "1.0.0 -> 1.1.0" in output
+    check "version = \"1.1.0\"" in readFile(dir / "Cargo.toml")
+    check "v1.1.0" in run("git tag", dir).output
+
   test "a config naming the fixed strategy is not advised to name it":
     # The advice is about a choice nimver made on its own. Once the config says
     # `fixed`, siblings still release together - but nothing was assumed.
