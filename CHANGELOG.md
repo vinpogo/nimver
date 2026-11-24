@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.4.0] - 2026-11-24
+
+- A package with multiple manifest files can version all of them at once by listing all files under [package.<package-name>.manifest] = "path-to-file-1, path-to-file-2".
+
+### Commits
+- docs: update README
+- build: add flake packaging
+- feat: support multiple manifests per package
+
 ## [5.3.1] - 2026-10-22
 
 ### Commits
