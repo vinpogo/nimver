@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.5.0] - 2026-11-26
+
+- auto-detected manifest files in repository root now include tree-sitter.json, Cargo.toml, extension.toml, package.json and *.nimble files.
+- nimver now versions `build.zig.zon` files.
+
+### Commits
+- feat: auto-detect tree-sitter.json, Cargo.toml and extension.toml
+- feat: add support for zig build.zig.zon manifests
+
 ## [5.4.0] - 2026-11-24
 
 - A package with multiple manifest files can version all of them at once by listing all files under [package.<package-name>.manifest] = "path-to-file-1, path-to-file-2".
