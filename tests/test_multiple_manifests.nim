@@ -1,6 +1,6 @@
 ## A package whose version is written in several manifests, and the TOML and
 ## JSON adapters such manifests need: `Cargo.toml`, a Zed `extension.toml`, a
-## `tree-sitter.json`.
+## `tree-sitter.json`, and the ZON one for a Zig `build.zig.zon`.
 
 import std/[unittest, os, strutils]
 import results
@@ -35,6 +35,27 @@ const TreeSitterJson = """{
     "version": "1.0.0",
     "license": "MIT"
   }
+}
+"""
+
+const BuildZigZon = """.{
+    .name = .cli,
+    // .version = "0.0.1", in a comment
+    .fingerprint = 0xdc128957cfbdb44a,
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{
+        .other = .{
+            .version = "9.9.9",
+            .url = "https://example.com/{.version = \"8.8.8\"}.tar.gz",
+            .hash = "abc",
+        },
+    },
+    .note =
+        \\ .version = "7.7.7"
+    ,
+    .brace = '{',
+    .version = "1.0.0",
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
 }
 """
 
@@ -87,6 +108,33 @@ suite "JSON manifests":
     let version = readVersion(manifestAt(path))
     check version.isErr
     check "at the top level or under 'metadata'" in version.error
+
+suite "ZON manifests":
+  test "the top-level .version, not a dependency's, a comment's or a string's":
+    let path = scratch("zig") / "build.zig.zon"
+    check versionIn(path, BuildZigZon) == "1.0.0"
+    check written(path, BuildZigZon) ==
+      BuildZigZon.replace(".version = \"1.0.0\"", ".version = \"1.1.0\"")
+
+  test "a quoted field name":
+    let path = scratch("zig-quoted") / "build.zig.zon"
+    let contents = ".{ .name = .cli, .@\"version\" = \"1.0.0\" }\n"
+    check versionIn(path, contents) == "1.0.0"
+    check written(path, contents) == contents.replace("1.0.0", "1.1.0")
+
+  test "a file without one says where it looked":
+    let path = scratch("zig-none") / "build.zig.zon"
+    writeFile(path, ".{ .deps = .{ .version = \"1.0.0\" } }\n")
+    let version = readVersion(manifestAt(path))
+    check version.isErr
+    check "Could not find a top-level '.version' field" in version.error
+
+  test "a version that is not a string is refused":
+    let path = scratch("zig-enum") / "build.zig.zon"
+    writeFile(path, ".{ .version = .latest }\n")
+    let version = readVersion(manifestAt(path))
+    check version.isErr
+    check "must be a quoted string" in version.error
 
 proc withManifests(dir: string, files: openArray[(string, string)]): string =
   ## Writes `files` (repository-relative path, contents) and makes them cli's
@@ -204,4 +252,4 @@ suite "several manifests in the configuration":
       [("packages/cli/VERSION", "1.0.0\n")],
     )
     let output = pending(dir, "cli")
-    check "A manifest is a .nimble, .json or .toml file" in output
+    check "A manifest is a .nimble, .json, .toml or .zon file" in output

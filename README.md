@@ -107,8 +107,9 @@ You can also use tracks to transition from `0.x` to `1.x`. See [The 1.0.0 cycle]
 - `.nimble`: the `version` field
 - `.json`: the top-level `version` (`package.json`), or `metadata.version` (`tree-sitter.json`)
 - `.toml`: a top-level `version` (a Zed `extension.toml`), or the one under `[package]` (`Cargo.toml`)
+- `.zon`: the top-level `.version` (a Zig `build.zig.zon`)
 
-nimver looks in the repository root for any `.nimble` file and for `package.json`, `tree-sitter.json`, `Cargo.toml` and `extension.toml`. Any other manifest has to be declared, see [Monorepos](#monorepos).
+nimver looks in the repository root for any `.nimble` file and for `package.json`, `tree-sitter.json`, `Cargo.toml`, `extension.toml` and `build.zig.zon`. Any other manifest has to be declared, see [Monorepos](#monorepos).
 
 ## Monorepos
 

@@ -111,6 +111,23 @@ suite "manifest adapters":
     check "version = \"1.1.0\"" in readFile(dir / "Cargo.toml")
     check "v1.1.0" in run("git tag", dir).output
 
+  test "a lone build.zig.zon is found like a lone package.json":
+    let dir = freshPackageRepo("lone-build-zig-zon")
+    removeFile(dir / "package.json")
+    writeFile(
+      dir / "build.zig.zon",
+      ".{\n    .name = .pkg,\n    .version = \"1.0.0\",\n    .dependencies = .{},\n}\n",
+    )
+    discard commitFile(dir, "build.zig", "// build\n", "feat: add build")
+
+    let (output, code) = run("nimver bump", dir)
+    check code == 0
+    check "1.0.0 -> 1.1.0" in output
+    check "(build.zig.zon)" in output
+    check readFile(dir / "build.zig.zon") ==
+      ".{\n    .name = .pkg,\n    .version = \"1.1.0\",\n    .dependencies = .{},\n}\n"
+    check "v1.1.0" in run("git tag", dir).output
+
   test "a config naming the fixed strategy is not advised to name it":
     # The advice is about a choice nimver made on its own. Once the config says
     # `fixed`, siblings still release together - but nothing was assumed.

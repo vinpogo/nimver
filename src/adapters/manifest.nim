@@ -1,5 +1,5 @@
 ## Detects a supported project manifest and dispatches version operations to
-## the adapter for its format: a `.nimble` file, JSON or TOML.
+## the adapter for its format: a `.nimble` file, JSON, TOML or ZON.
 
 import std/[algorithm, options, strutils, sequtils]
 import results
@@ -7,6 +7,7 @@ import ../sysio
 import ./nimble
 import ./jsonmanifest
 import ./toml
+import ./zon
 import ../semver
 
 type
@@ -14,6 +15,7 @@ type
     mkNimble
     mkJson
     mkToml
+    mkZon
 
   ProjectManifest* = object
     manifestKind*: ManifestKind
@@ -23,7 +25,7 @@ proc displayName*(manifest: ProjectManifest): string =
   case manifest.manifestKind
   of mkNimble:
     "Nimble"
-  of mkJson, mkToml:
+  of mkJson, mkToml, mkZon:
     manifest.filePath.extractFilename()
 
 func manifestKindOf(filePath: string): Option[ManifestKind] =
@@ -33,6 +35,8 @@ func manifestKindOf(filePath: string): Option[ManifestKind] =
     some(mkJson)
   elif filePath.endsWith(".toml"):
     some(mkToml)
+  elif filePath.endsWith(".zon"):
+    some(mkZon)
   else:
     none(ManifestKind)
 
@@ -43,13 +47,13 @@ proc manifestFromPath*(filePath: string): Result[ProjectManifest, string] =
   if maybeKind.isNone:
     return err(
       "Unsupported project manifest: " & filePath &
-        ". A manifest is a .nimble, .json or .toml file."
+        ". A manifest is a .nimble, .json, .toml or .zon file."
     )
   ok(ProjectManifest(manifestKind: maybeKind.get, filePath: filePath))
 
 const KnownManifestNames =
-  ["package.json", "tree-sitter.json", "Cargo.toml", "extension.toml"]
-  ## The JSON and TOML manifests found in a repository root by name. Their
+  ["package.json", "tree-sitter.json", "Cargo.toml", "extension.toml", "build.zig.zon"]
+  ## The JSON, TOML and ZON manifests found in a repository root by name. Their
   ## extensions alone would also find configuration files without a version.
 
 proc rootManifestNames*(entryNames: seq[string]): seq[string] =
@@ -90,6 +94,8 @@ proc readVersion*(manifest: ProjectManifest): Result[SemVer, string] =
     readJsonVersion(manifest.filePath)
   of mkToml:
     readTomlVersion(manifest.filePath)
+  of mkZon:
+    readZonVersion(manifest.filePath)
 
 proc versionWritten*(
     manifest: ProjectManifest, newVersion: SemVer
@@ -103,3 +109,5 @@ proc versionWritten*(
     jsonVersionWritten(manifest.filePath, newVersion)
   of mkToml:
     tomlVersionWritten(manifest.filePath, newVersion)
+  of mkZon:
+    zonVersionWritten(manifest.filePath, newVersion)

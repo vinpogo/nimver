@@ -179,7 +179,7 @@ proc loadWorkspace*(
     )
   if config.packages.len == 0 and detectedManifestNames.len == 0:
     return err(
-      "No supported project manifest found. Expected a .nimble file, package.json, tree-sitter.json, Cargo.toml or extension.toml."
+      "No supported project manifest found. Expected a .nimble file, package.json, tree-sitter.json, Cargo.toml, extension.toml or build.zig.zon."
     )
 
   let workspace = workspaceLayout(repoRoot, config, detectedManifestNames)
