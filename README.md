@@ -130,6 +130,13 @@ sourceFiles = "src/cli/src/**"
 
 `sourceFiles` is optional per package, see [Change attribution](#change-attribution).
 
+`nimver list` shows the packages nimver releases, one per line, each with its current version, its manifests, and the track it is on:
+
+```text
+web  1.2.0  packages/web/package.json  track 'alpha'
+cli  0.4.2  packages/cli/cli.nimble
+```
+
 ### Multiple manifests per package
 
 A package can keep its version in more than one manifest. List them comma-separated, in quotes:
@@ -294,6 +301,7 @@ nimver init
 nimver install-hooks [--force]
 nimver bump [<package>] [--dry-run] [--stable]
 nimver changelog <version> [<package>]
+nimver list
 nimver track
 nimver track enter <name> [--package <package>] [--stable]
 nimver track exit [--package <package>]

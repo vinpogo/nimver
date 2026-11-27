@@ -10,6 +10,7 @@ import ./commands/checkCommitMsg
 import ./commands/bump
 import ./commands/track
 import ./commands/changelog
+import ./commands/list
 
 const
   NimblePkgVersion {.strdefine.} = "unknown"
@@ -90,6 +91,14 @@ const
             call: tuple[version: string, package: Option[string]], effects: var Effects
         ): Result[int, string] =
           ?cmdChangelog(?findRepoRoot(), call.package, call.version, effects)
+          ok(0),
+      ),
+      initCommand(
+        name = "list",
+        summary =
+          "List the packages nimver releases, with their version, manifests and track.",
+        handler = proc(call: tuple[], effects: var Effects): Result[int, string] =
+          ?cmdList(?findRepoRoot(), effects)
           ok(0),
       ),
       initCommand(
