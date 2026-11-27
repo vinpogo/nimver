@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.6.0] - 2026-11-27
+
+### Commits
+- feat: add list command
+
 ## [5.5.1] - 2026-11-27
 
 ### Commits
