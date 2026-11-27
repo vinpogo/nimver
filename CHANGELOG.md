@@ -1,5 +1,10 @@
 # Changelog
 
+## [5.5.1] - 2026-11-27
+
+### Commits
+- fix(zon): skip trivia when parsing field names after dots
+
 ## [5.5.0] - 2026-11-26
 
 - auto-detected manifest files in repository root now include tree-sitter.json, Cargo.toml, extension.toml, package.json and *.nimble files.
