@@ -88,7 +88,8 @@ proc versionValueSpan(manifestPath, sourceContent: string): Result[SourceSpan, s
     of '}':
       dec nestingDepth
     of '.':
-      let maybeField = fieldName(sourceContent, cursorIndex + 1)
+      let maybeField =
+        fieldName(sourceContent, skipTrivia(sourceContent, cursorIndex + 1))
       if maybeField.isSome:
         let (name, nameEndIndex) = maybeField.get
         let afterNameIndex = skipTrivia(sourceContent, nameEndIndex)

@@ -116,6 +116,15 @@ suite "ZON manifests":
     check written(path, BuildZigZon) ==
       BuildZigZon.replace(".version = \"1.0.0\"", ".version = \"1.1.0\"")
 
+  test "strings, escapes, enum literals and comments do not stand in for it":
+    let path = scratch("zig-lexing") / "build.zig.zon"
+    let contents =
+      ".{\n    .name = .version,\n    .a = \"x\\\" .version = \\\"9.9.9\",\n" &
+      "    .b = '\\'', .c = '\"', .d = \"{\",\n    .versionx = \"8.8.8\",\n" &
+      "    . version // the release\n    = // set by nimver\n    \"1.0.0\",\n}\n"
+    check versionIn(path, contents) == "1.0.0"
+    check written(path, contents) == contents.replace("\"1.0.0\"", "\"1.1.0\"")
+
   test "a quoted field name":
     let path = scratch("zig-quoted") / "build.zig.zon"
     let contents = ".{ .name = .cli, .@\"version\" = \"1.0.0\" }\n"
